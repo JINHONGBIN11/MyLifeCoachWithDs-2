@@ -185,7 +185,9 @@ async function sendMessage() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Accept': 'text/event-stream'
+                    'Accept': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive'
                 },
                 body: JSON.stringify({
                     content,
@@ -195,8 +197,8 @@ async function sendMessage() {
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || '发送消息失败');
+                const errorData = await response.json().catch(() => ({ error: '请求失败' }));
+                throw new Error(errorData.error || `请求失败: ${response.status}`);
             }
 
             const reader = response.body.getReader();
@@ -245,6 +247,8 @@ async function sendMessage() {
                     timestamp: Date.now()
                 });
                 saveConversation();
+            } else {
+                throw new Error('未收到有效回复');
             }
 
         } catch (error) {
