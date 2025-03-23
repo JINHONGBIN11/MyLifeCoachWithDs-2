@@ -2,6 +2,7 @@
 let ws = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_INTERVAL = 3000;
 
 // DOM元素
 const messagesContainer = document.querySelector('.messages-container');
@@ -26,95 +27,71 @@ let currentConversation = {
 let conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
 
 // 更新连接状态
-function updateConnectionStatus(connected) {
+function updateConnectionStatus(connected, showError = false) {
   isConnected = connected;
   sendButton.disabled = !connected;
   if (connected) {
     sendButton.textContent = '发送';
     sendButton.classList.remove('disabled');
   } else {
-    sendButton.textContent = '连接中...';
+    sendButton.textContent = showError ? '连接失败，点击重试' : '连接中...';
     sendButton.classList.add('disabled');
   }
 }
 
+// 获取WebSocket URL
+function getWebSocketUrl() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    return `${protocol}//${host}`;
+}
+
 // 连接WebSocket
 function connectWebSocket() {
-  if (ws) {
-    ws.close();
-  }
-  
-  ws = new WebSocket('ws://localhost:3000');
-  
-  ws.onopen = () => {
-    updateConnectionStatus(true);
-    reconnectAttempts = 0;
-    console.log('Connected to server');
-  };
-
-  ws.onclose = () => {
-    updateConnectionStatus(false);
-    console.log('Disconnected from server');
+    if (ws) {
+        ws.close();
+    }
     
-    // 尝试重新连接
-    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-      reconnectAttempts++;
-      console.log(`尝试重新连接 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-      setTimeout(connectWebSocket, 3000);
-    } else {
-      console.log('达到最大重连次数，请刷新页面重试');
-      sendButton.textContent = '连接失败，点击重试';
-      sendButton.onclick = () => {
+    const wsUrl = getWebSocketUrl();
+    console.log('尝试连接WebSocket:', wsUrl);
+    ws = new WebSocket(wsUrl);
+    
+    ws.onopen = () => {
+        console.log('WebSocket连接成功');
+        isConnected = true;
         reconnectAttempts = 0;
-        connectWebSocket();
-      };
-    }
-  };
-
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
-    updateConnectionStatus(false);
-  };
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      console.log('收到消息:', data);
-      
-      if (data.type === 'content') {
-        if (!isTyping) {
-          isTyping = true;
-          const messageDiv = createMessageElement('', false);
-          messagesContainer.appendChild(messageDiv);
+        updateConnectionStatus(true);
+    };
+    
+    ws.onclose = () => {
+        console.log('WebSocket连接关闭');
+        isConnected = false;
+        updateConnectionStatus(false);
+        
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            console.log(`尝试重新连接 (${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
+            reconnectAttempts++;
+            setTimeout(connectWebSocket, RECONNECT_INTERVAL);
+        } else {
+            console.log('达到最大重连次数');
+            updateConnectionStatus(false, true);
         }
-        const messageContent = messagesContainer.lastElementChild.querySelector('.message-ai');
-        messageContent.textContent += data.content;
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-      } else if (data.type === 'error') {
-        hideTypingIndicator();
-        const errorMessage = createMessageElement(data.content, false);
-        messagesContainer.appendChild(errorMessage);
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-      } else if (data.type === 'done') {
-        hideTypingIndicator();
-        // 保存AI的完整回复到当前对话
-        const aiMessage = messagesContainer.lastElementChild.querySelector('.message-ai');
-        if (aiMessage) {
-          currentConversation.messages.push({
-            content: aiMessage.textContent,
-            isUser: false,
-            timestamp: Date.now()
-          });
-          // 保存对话到本地存储
-          saveConversation();
+    };
+    
+    ws.onerror = (error) => {
+        console.error('WebSocket错误:', error);
+        isConnected = false;
+        updateConnectionStatus(false);
+    };
+    
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'content') {
+            appendMessage(data.content, false);
+        } else if (data.type === 'done') {
+            console.log('AI回复完成');
         }
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-      }
-    } catch (error) {
-      console.error('处理消息时出错:', error);
-      hideTypingIndicator();
-    }
-  };
+    };
 }
 
 // 创建消息元素
