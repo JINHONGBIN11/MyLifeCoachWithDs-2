@@ -96,129 +96,64 @@ app.post('/api/chat', async (req, res) => {
             ...conversation.messages.slice(-5) // 只发送最近的5条消息以减少处理时间
         ];
 
-        // 设置超时 - 增加到50秒以适应Vercel环境
+        // 设置超时
         const controller = new AbortController();
-        const timeout = setTimeout(() => {
-            console.log('API请求即将超时，正在中止请求...');
-            controller.abort();
-        }, 50000); // 50秒超时
+        const timeout = setTimeout(() => controller.abort(), 50000); // 50秒超时
 
-        // 定义重试函数
-        async function callAPIWithRetry(apiUrl, requestOptions, maxRetries = 2) {
-            let lastError = null;
-            
-            for (let attempt = 0; attempt <= maxRetries; attempt++) {
-                try {
-                    // 如果是重试，记录重试信息
-                    if (attempt > 0) {
-                        console.log(`正在进行第 ${attempt} 次重试，共 ${maxRetries} 次重试机会...`);
-                        // 重试前等待一段时间，避免频繁请求
-                        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-                    }
-                    
-                    // 发送请求
-                    const response = await fetch(apiUrl, requestOptions);
-                    return response;
-                } catch (error) {
-                    console.error(`API调用失败 (尝试 ${attempt+1}/${maxRetries+1}):`, error.message);
-                    lastError = error;
-                    
-                    // 如果是最后一次尝试，或者是不应该重试的错误，则抛出
-                    if (attempt === maxRetries || error.name !== 'AbortError' && !error.message.includes('ECONNRESET')) {
-                        throw error;
-                    }
-                }
-            }
-            
-            // 如果所有重试都失败，抛出最后一个错误
-            throw lastError;
-        }
-        
         try {
-            // 记录API调用信息（不包含敏感信息）
-            console.log('准备调用DeepSeek API，模型：deepseek-chat，心情：', conversation.mood);
-            
-            // 准备API请求参数
-            const apiUrl = 'https://api.deepseek.com/v1/chat/completions';
-            const requestBody = {
-                model: 'deepseek-chat',
-                messages: messages,
-                temperature: moodMap[conversation.mood] || 0.6,
-                max_tokens: 500,
-                stream: false
-            };
-            
-            const requestOptions = {
+            // 调用DeepSeek API
+            const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
                     'Accept': 'application/json'
                 },
-                body: JSON.stringify(requestBody),
+                body: JSON.stringify({
+                    model: 'deepseek-chat',
+                    messages: messages,
+                    temperature: moodMap[conversation.mood] || 0.6,
+                    max_tokens: 500,
+                    stream: false
+                }),
                 signal: controller.signal
-            };
+            });
+
+            clearTimeout(timeout);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('DeepSeek API 错误响应:', errorText);
+                throw new Error(`API请求失败: ${response.status} - ${errorText}`);
+            }
+
+            const data = await response.json();
             
-            // 使用重试机制调用API
-            let response;
-            try {
-                response = await callAPIWithRetry(apiUrl, requestOptions, 3);
-                clearTimeout(timeout);
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    let errorMessage;
-                    
-                    switch (response.status) {
-                        case 401:
-                            errorMessage = '认证失败：请检查API密钥是否有效';
-                            break;
-                        case 429:
-                            errorMessage = '请求过多：已超过API调用限制，请稍后再试';
-                            break;
-                        case 500:
-                        case 502:
-                        case 503:
-                        case 504:
-                            errorMessage = 'DeepSeek服务器错误：请稍后再试';
-                            break;
-                        default:
-                            errorMessage = `API请求失败: ${response.status}`;
-                    }
-                    
-                    console.error('DeepSeek API错误:', {
-                        status: response.status,
-                        message: errorMessage,
-                        details: errorText
-                    });
-                    
-                    throw new Error(errorMessage);
-                }
-                
-                const data = await response.json();
-                
-                if (!data || !data.choices || !data.choices[0] || !data.choices[0].message) {
-                    throw new Error('API响应格式无效');
-                }
-                const aiResponse = data.choices[0].message.content;
-                
-                // 保存AI回复到对话历史
-                conversation.messages.push({
-                    role: 'assistant',
-                    content: aiResponse,
-                    timestamp: Date.now()
-                });
-                
-                // 记录成功响应
-                console.log('成功获取AI回复，长度:', aiResponse.length);
-                
-                // 返回成功响应
-                res.json({
-                    status: 'success',
-                    content: aiResponse,
-                    timestamp: Date.now()
-                });
-            } catch (error) {
+            if (data.error) {
+                throw new Error(data.error.message || '未知错误');
+            }
+
+            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                throw new Error('API响应格式错误');
+            }
+
+            const aiResponse = data.choices[0].message.content;
+
+            // 保存AI回复到对话历史
+            conversation.messages.push({
+                role: 'assistant',
+                content: aiResponse,
+                timestamp: Date.now()
+            });
+
+            // 返回成功响应
+            res.json({
+                status: 'success',
+                content: aiResponse,
+                timestamp: Date.now()
+            });
+
+        } catch (error) {
             clearTimeout(timeout);
             
             let errorDetails = {
@@ -231,17 +166,13 @@ app.post('/api/chat', async (req, res) => {
             if (error.name === 'AbortError') {
                 errorDetails.code = 'TIMEOUT';
                 errorDetails.message = 'API请求超时，请稍后重试';
-                console.error('API请求超时:', errorDetails);
             } else if (error.response) {
                 errorDetails.code = 'API_ERROR';
                 errorDetails.status = error.response.status;
-                console.error('API响应错误:', errorDetails);
             } else if (error.request) {
                 errorDetails.code = 'NETWORK_ERROR';
-                console.error('网络请求失败:', errorDetails);
             } else {
                 errorDetails.code = 'UNKNOWN_ERROR';
-                console.error('未知错误:', errorDetails);
             }
             
             throw errorDetails;
