@@ -1,54 +1,78 @@
-# My AI Life Coach
+# MyLifeCoachWithDs-2
 
-这是一个基于DeepSeek R1 API开发的AI生活教练网站。通过与AI助手的对话，获取个性化的建议和指导，帮助你在生活中不断成长。
-
-## 项目结构
-
-```
-/
-├── frontend/           # 前端文件
-│   ├── index.html     # 主页面
-│   ├── styles/        # CSS样式文件
-│   └── js/           # JavaScript文件
-├── backend/           # 后端服务器
-│   └── server.js     # Node.js服务器文件
-└── README.md         # 项目说明文档
-```
+一个基于 DeepSeek API 的智能生活教练应用，提供情绪支持和个性化建议。
 
 ## 功能特点
 
-- 实时AI对话：通过DeepSeek R1 API实现流畅的对话体验
-- 响应式设计：适配各种设备屏幕
-- 简洁优雅的界面：专注于对话体验
-- 安全的API调用：通过后端服务器处理API请求
+- 🤖 智能对话：基于 DeepSeek API 的自然语言交互
+- 😊 情绪分析：实时分析用户情绪并提供相应支持
+- 📊 情绪追踪：可视化展示历史对话的情绪变化
+- 💬 对话历史：保存并管理所有对话记录
+- 🎨 现代化界面：响应式设计，支持多设备访问
 
 ## 技术栈
 
 - 前端：HTML5, CSS3, JavaScript
-- 后端：Node.js
-- API：DeepSeek R1 API
+- 后端：Node.js, WebSocket
+- API：DeepSeek API
+- 数据存储：本地存储 (localStorage)
 
-## 开发说明
+## 安装步骤
 
-1. 前端页面采用响应式设计，使用Flexbox布局
-2. 使用WebSocket实现流式对话响应
-3. 采用简约现代的设计风格
-4. 确保代码的可维护性和可扩展性
+1. 克隆仓库
+```bash
+git clone https://github.com/JINHONGBIN11/MyLifeCoachWithDs-2.git
+cd MyLifeCoachWithDs-2
+```
 
-## 安装和运行
-
-1. 安装Node.js依赖：
+2. 安装依赖
 ```bash
 cd backend
 npm install
 ```
 
-2. 启动后端服务器：
+3. 配置环境变量
+在 backend 目录下创建 `.env` 文件，添加以下内容：
+```
+DEEPSEEK_API_KEY=你的API密钥
+```
+
+4. 启动服务器
 ```bash
+cd backend
 node server.js
 ```
 
-3. 在浏览器中打开前端页面：
-```
-frontend/index.html
-``` 
+5. 访问应用
+打开浏览器访问 `http://localhost:3000`
+
+## 使用说明
+
+1. 主界面
+   - 左侧边栏显示历史对话列表
+   - 右侧是聊天区域，可以发送消息和接收AI回复
+   - 底部有心情选择器，可以标记当前情绪状态
+
+2. 情绪分析
+   - 点击左侧边栏的"情绪分析"按钮查看情绪统计
+   - 可以查看不同情绪类型的分布
+   - 支持按时间范围筛选数据
+
+3. 对话管理
+   - 可以创建新对话
+   - 支持删除历史对话
+   - 自动保存所有对话记录
+
+## 注意事项
+
+- 请确保有有效的 DeepSeek API 密钥
+- 建议使用现代浏览器访问应用
+- 本地存储有容量限制，请定期清理不需要的对话记录
+
+## 贡献指南
+
+欢迎提交 Issue 和 Pull Request 来帮助改进项目。
+
+## 许可证
+
+MIT License 
