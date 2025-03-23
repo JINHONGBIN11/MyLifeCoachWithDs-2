@@ -50,6 +50,14 @@ app.post('/api/chat', async (req, res) => {
   try {
     const { content, mood, conversationId } = req.body;
     
+    if (!content || !conversationId) {
+      return res.status(400).json({ error: '缺少必要参数' });
+    }
+
+    if (!process.env.DEEPSEEK_API_KEY) {
+      return res.status(500).json({ error: 'API密钥未配置' });
+    }
+    
     let conversation = conversations.get(conversationId);
     if (!conversation) {
       conversation = {
@@ -76,35 +84,44 @@ app.post('/api/chat', async (req, res) => {
         content: msg.content
       }))
     ];
+
+    console.log('发送请求到 DeepSeek API...');
+    console.log('消息列表:', messages);
     
-    const response = await fetch('https://api.deepseek.com/chat/completions', {
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        'Accept': 'text/event-stream'
       },
       body: JSON.stringify({
         model: "deepseek-chat",
         messages: messages,
-        stream: true
+        stream: true,
+        temperature: moodMap[mood] || 0.6,
+        max_tokens: 2000
       })
     });
     
     if (!response.ok) {
-      throw new Error(`API请求失败: ${response.status}`);
+      const errorText = await response.text();
+      console.error('DeepSeek API 错误响应:', errorText);
+      throw new Error(`API请求失败: ${response.status} - ${errorText}`);
     }
     
     // 存储响应流
     responseStreams.set(conversationId, {
       stream: response.body,
       buffer: '',
-      isDone: false
+      isDone: false,
+      createdAt: Date.now()
     });
     
     res.json({ success: true });
   } catch (error) {
     console.error('处理聊天请求失败:', error);
-    res.status(500).json({ error: '处理聊天请求失败' });
+    res.status(500).json({ error: error.message || '处理聊天请求失败' });
   }
 });
 
