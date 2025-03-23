@@ -218,8 +218,7 @@ app.post('/api/chat', async (req, res) => {
                     content: aiResponse,
                     timestamp: Date.now()
                 });
-
-        } catch (error) {
+            } catch (error) {
             clearTimeout(timeout);
             
             let errorDetails = {
