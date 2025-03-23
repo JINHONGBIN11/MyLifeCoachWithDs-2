@@ -198,6 +198,24 @@ app.get('/api/chat/:id/stream', async (req, res) => {
     const timeout = setTimeout(() => controller.abort(), 8000); // 8秒超时
 
     try {
+        const { content, mood, conversationId } = req.body;
+        
+        if (!content || !conversationId) {
+            clearTimeout(timeout);
+            return res.status(400).json({ 
+                error: '缺少必要参数',
+                details: {
+                    content: !content ? '消息内容不能为空' : undefined,
+                    conversationId: !conversationId ? '会话ID不能为空' : undefined
+                }
+            });
+        }
+
+        if (!process.env.DEEPSEEK_API_KEY) {
+            clearTimeout(timeout);
+            return res.status(500).json({ error: 'API密钥未配置' });
+        }
+
         // 设置SSE头部
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
@@ -208,7 +226,9 @@ app.get('/api/chat/:id/stream', async (req, res) => {
         // 获取对话历史
         const conversation = conversations.get(id);
         if (!conversation) {
-            throw new Error('对话不存在');
+            res.write(`data: ${JSON.stringify({ error: '对话不存在' })}\n\n`);
+            res.end();
+            return;
         }
 
         // 准备系统消息
@@ -249,18 +269,30 @@ app.get('/api/chat/:id/stream', async (req, res) => {
                 throw new Error(`API请求失败: ${response.status} - ${errorText}`);
             }
 
+            let fullResponse = '';
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
+            let buffer = ''; // 用于存储不完整的数据
 
             try {
                 while (true) {
                     const { done, value } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        // 发送结束标记
+                        res.write('data: [DONE]\n\n');
+                        break;
+                    }
 
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
+                    // 解码新的数据块并添加到缓冲区
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // 处理完整的行
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // 保存最后一个不完整的行
 
                     for (const line of lines) {
+                        if (line.trim() === '') continue;
+                        
                         if (line.startsWith('data: ')) {
                             const data = line.slice(6);
                             if (data === '[DONE]') {
@@ -272,16 +304,27 @@ app.get('/api/chat/:id/stream', async (req, res) => {
                                 const parsed = JSON.parse(data);
                                 if (parsed.choices?.[0]?.delta?.content) {
                                     const content = parsed.choices[0].delta.content;
+                                    fullResponse += content;
                                     res.write(`data: ${JSON.stringify({ content })}\n\n`);
                                 }
                             } catch (e) {
-                                console.error('解析流数据失败:', e);
+                                console.error('解析流数据失败:', e, 'data:', data);
+                                continue;
                             }
                         }
                     }
                 }
             } finally {
                 reader.releaseLock();
+            }
+
+            // 保存完整回复到对话历史
+            if (fullResponse) {
+                conversation.messages.push({
+                    role: 'assistant',
+                    content: fullResponse,
+                    timestamp: Date.now()
+                });
             }
 
             res.end();
@@ -292,6 +335,8 @@ app.get('/api/chat/:id/stream', async (req, res) => {
             
             // 发送错误事件
             res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+        } finally {
+            clearTimeout(timeout);
             res.end();
         }
     } catch (error) {
@@ -313,10 +358,8 @@ app.get('/api/chat/:id/stream', async (req, res) => {
                 errorMessage = '无法连接到API服务器';
             }
             
-            return res.status(statusCode).json({
-                error: errorMessage,
-                requestId: `req_${Date.now().toString(36)}`
-            });
+            res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
+            res.end();
         }
     }
 });

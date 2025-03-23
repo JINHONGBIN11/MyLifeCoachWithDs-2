@@ -214,19 +214,37 @@ async function sendMessage() {
             const reader = streamResponse.body.getReader();
             const decoder = new TextDecoder();
             let fullResponse = '';
+            let buffer = ''; // 用于存储不完整的数据
 
             try {
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
+                    // 解码新的数据块并添加到缓冲区
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // 处理完整的行
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // 保存最后一个不完整的行
 
                     for (const line of lines) {
+                        if (line.trim() === '') continue;
+                        
                         if (line.startsWith('data: ')) {
-                            const data = line.slice(6);
-                            if (data === '[DONE]') continue;
+                            const data = line.slice(6).trim();
+                            if (data === '[DONE]') {
+                                // 保存完整回复到对话历史
+                                if (fullResponse) {
+                                    currentConversation.messages.push({
+                                        role: 'assistant',
+                                        content: fullResponse,
+                                        timestamp: Date.now()
+                                    });
+                                    saveConversation();
+                                }
+                                break;
+                            }
 
                             try {
                                 const parsed = JSON.parse(data);
@@ -240,7 +258,8 @@ async function sendMessage() {
                                     messagesContainer.scrollTop = messagesContainer.scrollHeight;
                                 }
                             } catch (e) {
-                                console.error('解析流数据失败:', e);
+                                console.error('解析流数据失败:', e, 'data:', data);
+                                continue;
                             }
                         }
                     }
@@ -249,15 +268,8 @@ async function sendMessage() {
                 reader.releaseLock();
             }
 
-            // 保存完整回复到对话历史
-            if (fullResponse) {
-                currentConversation.messages.push({
-                    role: 'assistant',
-                    content: fullResponse,
-                    timestamp: Date.now()
-                });
-                saveConversation();
-            } else {
+            // 如果没有收到任何响应
+            if (!fullResponse) {
                 throw new Error('未收到有效回复');
             }
 
@@ -266,11 +278,12 @@ async function sendMessage() {
             showError(error.message);
             // 移除空的消息容器
             messageContainer.remove();
+        } finally {
+            hideTypingIndicator();
         }
     } catch (error) {
         console.error('发送消息失败:', error);
         showError(error.message);
-    } finally {
         hideTypingIndicator();
     }
 }
