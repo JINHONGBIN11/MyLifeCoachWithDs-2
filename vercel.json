@@ -27,10 +27,12 @@
   "env": {
     "NODE_ENV": "production"
   },
+  "regions": ["hkg1"],
   "functions": {
     "backend/server.js": {
       "memory": 1024,
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "frontend/**"
     }
   }
 }

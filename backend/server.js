@@ -96,12 +96,12 @@ app.post('/api/chat', async (req, res) => {
             ...conversation.messages.slice(-5) // 只发送最近的5条消息以减少处理时间
         ];
 
-        // 设置超时 - 增加到45秒以适应Vercel环境
+        // 设置超时 - 增加到50秒以适应Vercel环境
         const controller = new AbortController();
         const timeout = setTimeout(() => {
             console.log('API请求即将超时，正在中止请求...');
             controller.abort();
-        }, 45000); // 45秒超时
+        }, 50000); // 50秒超时
 
         try {
             // 记录API调用信息（不包含敏感信息）
@@ -113,7 +113,8 @@ app.post('/api/chat', async (req, res) => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+                    'Accept': 'application/json'
                 },
                 body: JSON.stringify({
                     model: 'deepseek-chat',
@@ -121,10 +122,12 @@ app.post('/api/chat', async (req, res) => {
                     temperature: moodMap[conversation.mood] || 0.6,
                     max_tokens: 800, // 进一步减少token数以加快响应
                     stream: false,
-                    timeout: 40 // 设置API超时时间为40秒
+                    timeout: 45 // 设置API超时时间为45秒
                 }),
                 signal: controller.signal
             });
+            
+            console.log('DeepSeek API请求完成，状态码:', response.status);
             
             console.log('DeepSeek API响应状态：', response.status);
 
