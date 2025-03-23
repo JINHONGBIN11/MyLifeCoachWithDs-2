@@ -1,0 +1,12 @@
+{
+  "name": "mylifecoachwithds-2",
+  "version": "1.0.0",
+  "description": "AI Life Coach with DeepSeek API",
+  "scripts": {
+    "start": "cd backend && node server.js",
+    "dev": "cd backend && nodemon server.js"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+} 
