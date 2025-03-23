@@ -180,14 +180,11 @@ async function sendMessage() {
         messagesContainer.appendChild(messageContainer);
 
         try {
-            // 发送请求到流式API
-            const response = await fetch('/api/chat/stream', {
+            // 首先发送消息到服务器
+            const initResponse = await fetch('/api/chat', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'text/event-stream',
-                    'Cache-Control': 'no-cache',
-                    'Connection': 'keep-alive'
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     content,
@@ -196,12 +193,25 @@ async function sendMessage() {
                 })
             });
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ error: '请求失败' }));
-                throw new Error(errorData.error || `请求失败: ${response.status}`);
+            if (!initResponse.ok) {
+                const errorData = await initResponse.json().catch(() => ({ error: '请求失败' }));
+                throw new Error(errorData.error || `请求失败: ${initResponse.status}`);
             }
 
-            const reader = response.body.getReader();
+            // 然后建立流式连接
+            const streamResponse = await fetch(`/api/chat/${currentConversation.id}/stream`, {
+                headers: {
+                    'Accept': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive'
+                }
+            });
+
+            if (!streamResponse.ok) {
+                throw new Error(`流式请求失败: ${streamResponse.status}`);
+            }
+
+            const reader = streamResponse.body.getReader();
             const decoder = new TextDecoder();
             let fullResponse = '';
 

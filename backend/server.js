@@ -192,29 +192,12 @@ app.post('/api/chat', async (req, res) => {
 });
 
 // 处理流式聊天请求
-app.post('/api/chat/stream', async (req, res) => {
+app.get('/api/chat/:id/stream', async (req, res) => {
+    const { id } = req.params;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000); // 30秒超时
+    const timeout = setTimeout(() => controller.abort(), 8000); // 8秒超时
 
     try {
-        const { content, mood, conversationId } = req.body;
-        
-        if (!content || !conversationId) {
-            clearTimeout(timeout);
-            return res.status(400).json({ 
-                error: '缺少必要参数',
-                details: {
-                    content: !content ? '消息内容不能为空' : undefined,
-                    conversationId: !conversationId ? '会话ID不能为空' : undefined
-                }
-            });
-        }
-
-        if (!process.env.DEEPSEEK_API_KEY) {
-            clearTimeout(timeout);
-            return res.status(500).json({ error: 'API密钥未配置' });
-        }
-
         // 设置SSE头部
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
@@ -222,23 +205,11 @@ app.post('/api/chat/stream', async (req, res) => {
             'Connection': 'keep-alive'
         });
 
-        let conversation = conversations.get(conversationId);
+        // 获取对话历史
+        const conversation = conversations.get(id);
         if (!conversation) {
-            conversation = {
-                id: conversationId,
-                messages: [],
-                mood: mood || 'peaceful',
-                title: content.slice(0, 20) + (content.length > 20 ? '...' : ''),
-                createdAt: Date.now()
-            };
-            conversations.set(conversationId, conversation);
+            throw new Error('对话不存在');
         }
-
-        // 添加用户消息
-        conversation.messages.push({
-            role: 'user',
-            content: content
-        });
 
         // 准备系统消息
         const systemMessage = {
@@ -265,7 +236,7 @@ app.post('/api/chat/stream', async (req, res) => {
                     model: 'deepseek-chat',
                     messages: messages,
                     temperature: moodMap[conversation.mood] || 0.6,
-                    max_tokens: 1000,
+                    max_tokens: 500,
                     stream: true,
                     presence_penalty: 0.6,
                     frequency_penalty: 0.6
@@ -278,7 +249,6 @@ app.post('/api/chat/stream', async (req, res) => {
                 throw new Error(`API请求失败: ${response.status} - ${errorText}`);
             }
 
-            let fullResponse = '';
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
 
@@ -302,7 +272,6 @@ app.post('/api/chat/stream', async (req, res) => {
                                 const parsed = JSON.parse(data);
                                 if (parsed.choices?.[0]?.delta?.content) {
                                     const content = parsed.choices[0].delta.content;
-                                    fullResponse += content;
                                     res.write(`data: ${JSON.stringify({ content })}\n\n`);
                                 }
                             } catch (e) {
@@ -313,15 +282,6 @@ app.post('/api/chat/stream', async (req, res) => {
                 }
             } finally {
                 reader.releaseLock();
-            }
-
-            // 保存完整回复到对话历史
-            if (fullResponse) {
-                conversation.messages.push({
-                    role: 'assistant',
-                    content: fullResponse,
-                    timestamp: Date.now()
-                });
             }
 
             res.end();
