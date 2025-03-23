@@ -105,7 +105,7 @@ app.post('/api/chat', async (req, res) => {
 
         try {
             // 记录API调用信息（不包含敏感信息）
-            console.log('准备调用DeepSeek API，模型：deepseek-chat，心情：', conversation.mood);
+            console.log('准备调用DeepSeek API，模型：deepseek-v3，心情：', conversation.mood);
             console.log('API密钥状态：', process.env.DEEPSEEK_API_KEY ? '已设置' : '未设置');
             
             // 调用DeepSeek API
@@ -117,7 +117,7 @@ app.post('/api/chat', async (req, res) => {
                     'Accept': 'application/json'
                 },
                 body: JSON.stringify({
-                    model: 'deepseek-chat',
+                    model: 'deepseek-v3', // 更新为最新的DeepSeek-V3模型
                     messages: messages,
                     temperature: moodMap[conversation.mood] || 0.6,
                     max_tokens: 800, // 进一步减少token数以加快响应
@@ -138,7 +138,18 @@ app.post('/api/chat', async (req, res) => {
                 console.error('DeepSeek API 错误响应:', errorText);
                 console.error('响应状态码:', response.status);
                 console.error('请求头:', JSON.stringify(response.headers.raw()));
-                throw new Error(`API请求失败: ${response.status} - ${errorText}`);
+                
+                // 根据状态码提供更具体的错误信息
+                let errorMessage = `API请求失败: ${response.status}`;
+                if (response.status === 401) {
+                    errorMessage = '认证失败：请检查API密钥是否有效';
+                } else if (response.status === 429) {
+                    errorMessage = '请求过多：已超过API调用限制，请稍后再试';
+                } else if (response.status >= 500) {
+                    errorMessage = 'DeepSeek服务器错误：请稍后再试';
+                }
+                
+                throw new Error(`${errorMessage} - ${errorText}`);
             }
 
             console.log('DeepSeek API响应成功，开始解析数据');
