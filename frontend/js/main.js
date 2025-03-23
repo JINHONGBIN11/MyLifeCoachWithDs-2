@@ -119,8 +119,7 @@ async function sendMessage() {
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'text/event-stream'
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 content,
@@ -131,52 +130,59 @@ async function sendMessage() {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`服务器响应错误: ${response.status} - ${errorText}`);
+            console.error('服务器响应错误:', response.status, errorText);
+            throw new Error(`服务器响应错误: ${response.status}`);
         }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let aiResponse = '';
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
 
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n');
 
-            for (const line of lines) {
-                if (line.startsWith(':')) continue; // 跳过 keep-alive 注释
+                for (const line of lines) {
+                    if (line.trim() === '' || line.startsWith(':')) continue;
 
-                if (line.startsWith('data: ')) {
-                    const data = line.slice(6);
-                    if (data === '[DONE]') {
-                        // 保存AI回复到对话历史
-                        if (aiResponse) {
-                            currentConversation.messages.push({
-                                role: 'assistant',
-                                content: aiResponse
-                            });
-                            saveConversation();
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        if (data === '[DONE]') {
+                            // 保存AI回复到对话历史
+                            if (aiResponse) {
+                                currentConversation.messages.push({
+                                    role: 'assistant',
+                                    content: aiResponse
+                                });
+                                saveConversation();
+                            }
+                            hideTypingIndicator();
+                            break;
                         }
-                        hideTypingIndicator();
-                        break;
-                    }
 
-                    try {
-                        const parsed = JSON.parse(data);
-                        if (parsed.content) {
-                            aiResponse += parsed.content;
-                            appendMessage(parsed.content, false);
-                        } else if (parsed.error) {
-                            throw new Error(parsed.error);
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.content) {
+                                aiResponse += parsed.content;
+                                appendMessage(parsed.content, false);
+                            } else if (parsed.error) {
+                                throw new Error(parsed.error);
+                            }
+                        } catch (e) {
+                            console.error('解析响应数据失败:', e, '原始数据:', data);
                         }
-                    } catch (e) {
-                        console.error('解析SSE消息失败:', e);
-                        console.error('原始数据:', data);
                     }
                 }
             }
+        } catch (error) {
+            console.error('处理流式响应时出错:', error);
+            throw error;
+        } finally {
+            hideTypingIndicator();
         }
     } catch (error) {
         console.error('发送消息失败:', error);
@@ -627,8 +633,6 @@ function createNewConversation() {
 // 测试服务器连接
 async function testServerConnection() {
     try {
-        showError('正在测试服务器连接...');
-        
         // 测试健康检查端点
         const healthResponse = await fetch('/api/health');
         if (!healthResponse.ok) {
@@ -641,24 +645,7 @@ async function testServerConnection() {
             throw new Error(`对话列表获取失败: ${conversationsResponse.status}`);
         }
         
-        // 测试发送消息
-        const testResponse = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                content: '测试消息',
-                mood: 'peaceful',
-                conversationId: 'test-' + Date.now().toString()
-            })
-        });
-        
-        if (!testResponse.ok) {
-            throw new Error(`消息发送测试失败: ${testResponse.status}`);
-        }
-        
-        showError('服务器连接测试成功！所有API端点都正常工作。');
+        console.log('服务器连接测试成功');
     } catch (error) {
         console.error('服务器连接测试失败:', error);
         showError(`服务器连接测试失败: ${error.message}\n请检查服务器是否正常运行。`);
