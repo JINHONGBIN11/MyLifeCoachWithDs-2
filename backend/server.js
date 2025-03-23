@@ -96,9 +96,12 @@ app.post('/api/chat', async (req, res) => {
             ...conversation.messages.slice(-5) // 只发送最近的5条消息以减少处理时间
         ];
 
-        // 设置超时
+        // 设置超时 - 增加到45秒以适应Vercel环境
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 25000); // 25秒超时
+        const timeout = setTimeout(() => {
+            console.log('API请求即将超时，正在中止请求...');
+            controller.abort();
+        }, 45000); // 45秒超时
 
         try {
             // 记录API调用信息（不包含敏感信息）
@@ -116,8 +119,9 @@ app.post('/api/chat', async (req, res) => {
                     model: 'deepseek-chat',
                     messages: messages,
                     temperature: moodMap[conversation.mood] || 0.6,
-                    max_tokens: 1000, // 减少token数以加快响应
-                    stream: false
+                    max_tokens: 800, // 进一步减少token数以加快响应
+                    stream: false,
+                    timeout: 40 // 设置API超时时间为40秒
                 }),
                 signal: controller.signal
             });
@@ -162,15 +166,44 @@ app.post('/api/chat', async (req, res) => {
             res.json({ content: aiResponse });
 
         } catch (error) {
+            clearTimeout(timeout); // 确保清除超时计时器
+            
             if (error.name === 'AbortError') {
+                console.error('API请求被中止：请求超时');
                 throw new Error('API请求超时，请稍后重试');
             }
+            
+            // 详细记录错误信息
+            console.error('API请求失败详情:', {
+                errorName: error.name,
+                errorMessage: error.message,
+                errorStack: error.stack
+            });
+            
             throw error;
         }
     } catch (error) {
         console.error('处理聊天请求时出错:', error);
-        res.status(error.message.includes('API请求超时') ? 504 : 500)
-           .json({ error: error.message || '处理请求失败' });
+        
+        // 根据错误类型设置适当的状态码
+        let statusCode = 500;
+        if (error.message.includes('API请求超时')) {
+            statusCode = 504; // Gateway Timeout
+        } else if (error.message.includes('API密钥')) {
+            statusCode = 401; // Unauthorized
+        } else if (error.message.includes('请求失败') && error.message.includes('429')) {
+            statusCode = 429; // Too Many Requests
+        }
+        
+        // 返回详细错误信息
+        res.status(statusCode).json({ 
+            error: error.message || '处理请求失败',
+            timestamp: Date.now(),
+            requestId: `req_${Date.now().toString(36)}`
+        });
+        
+        // 记录错误发生时间和会话ID
+        console.error(`错误发生时间: ${new Date().toISOString()}, 会话ID: ${conversationId || 'unknown'}`);
     }
 });
 
@@ -229,9 +262,23 @@ app.get('/api/mood-analysis', (req, res) => {
     }
 });
 
-// 健康检查
+// 健康检查 - 增强版
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok' });
+    const uptime = process.uptime();
+    const memoryUsage = process.memoryUsage();
+    
+    res.json({ 
+        status: 'ok',
+        timestamp: Date.now(),
+        uptime: uptime,
+        memory: {
+            rss: Math.round(memoryUsage.rss / 1024 / 1024) + 'MB',
+            heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + 'MB',
+            heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + 'MB'
+        },
+        conversations: conversations.size,
+        environment: process.env.NODE_ENV || 'development'
+    });
 });
 
 // 启动服务器
