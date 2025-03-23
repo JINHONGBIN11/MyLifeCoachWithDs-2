@@ -282,10 +282,8 @@ function saveConversation() {
 
 // 事件监听器
 document.addEventListener('DOMContentLoaded', () => {
-    // 初始化发送按钮
     sendButton.addEventListener('click', sendMessage);
     
-    // 初始化输入框
     messageInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -293,23 +291,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // 初始化心情按钮
     moodButtons.forEach(btn => {
         btn.addEventListener('click', () => {
             moodButtons.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            currentConversation.mood = btn.dataset.mood;
-            saveConversation();
+            if (currentConversation) {
+                currentConversation.mood = btn.dataset.mood;
+                saveConversation();
+            }
         });
     });
     
-    // 初始化新对话按钮
     const newChatBtn = document.getElementById('newChatBtn');
     if (newChatBtn) {
         newChatBtn.addEventListener('click', createNewConversation);
     }
     
-    // 初始化心情分析按钮
     if (moodAnalysisBtn && moodAnalysisContent) {
         moodAnalysisBtn.addEventListener('click', () => {
             moodAnalysisContent.classList.toggle('show');
@@ -319,14 +316,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // 初始化历史对话列表
     fetchConversations();
     
-    // 测试服务器连接
-    testServerConnection();
-    
-    // 显示欢迎消息
-    if (!currentConversation.messages.length) {
+    if (!currentConversation || !currentConversation.messages.length) {
         messagesContainer.innerHTML = `
             <div class="welcome-message">
                 你好！我是你的AI生活教练。我可以帮助你提供生活建议、解决困扰、分享积极态度和情绪支持。请告诉我你现在的感受，我会根据你的心情提供相应的帮助。
