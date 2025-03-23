@@ -223,6 +223,7 @@ async function sendMessage() {
 
                     // 解码新的数据块并添加到缓冲区
                     buffer += decoder.decode(value, { stream: true });
+                    console.log('Received chunk:', buffer);
                     
                     // 处理完整的行
                     const lines = buffer.split('\n');

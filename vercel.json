@@ -27,5 +27,13 @@
   "env": {
     "NODE_ENV": "production"
   },
-  "regions": ["hkg1"]
+  "regions": ["hkg1"],
+  "functions": {
+    "api/chat/index.js": {
+      "maxDuration": 60
+    },
+    "api/chat/[id]/stream.js": {
+      "maxDuration": 60
+    }
+  }
 }

@@ -194,28 +194,11 @@ app.post('/api/chat', async (req, res) => {
 // 处理流式聊天请求
 app.get('/api/chat/:id/stream', async (req, res) => {
     const { id } = req.params;
+    console.log(`Starting stream for chat ID: ${id}`);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000); // 8秒超时
 
     try {
-        const { content, mood, conversationId } = req.body;
-        
-        if (!content || !conversationId) {
-            clearTimeout(timeout);
-            return res.status(400).json({ 
-                error: '缺少必要参数',
-                details: {
-                    content: !content ? '消息内容不能为空' : undefined,
-                    conversationId: !conversationId ? '会话ID不能为空' : undefined
-                }
-            });
-        }
-
-        if (!process.env.DEEPSEEK_API_KEY) {
-            clearTimeout(timeout);
-            return res.status(500).json({ error: 'API密钥未配置' });
-        }
-
         // 设置SSE头部
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
@@ -226,6 +209,7 @@ app.get('/api/chat/:id/stream', async (req, res) => {
         // 获取对话历史
         const conversation = conversations.get(id);
         if (!conversation) {
+            console.log(`Conversation not found: ${id}`);
             res.write(`data: ${JSON.stringify({ error: '对话不存在' })}\n\n`);
             res.end();
             return;
@@ -244,6 +228,7 @@ app.get('/api/chat/:id/stream', async (req, res) => {
         ];
 
         try {
+            console.log('Calling DeepSeek API...');
             // 调用DeepSeek API（流式）
             const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
                 method: 'POST',
@@ -266,25 +251,36 @@ app.get('/api/chat/:id/stream', async (req, res) => {
 
             if (!response.ok) {
                 const errorText = await response.text();
+                console.error('DeepSeek API error:', errorText);
                 throw new Error(`API请求失败: ${response.status} - ${errorText}`);
             }
 
-            let fullResponse = '';
+            console.log('DeepSeek API response received');
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = ''; // 用于存储不完整的数据
+            let fullResponse = '';
 
             try {
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
-                        // 发送结束标记
+                        console.log('Stream completed');
+                        // 保存完整回复到对话历史
+                        if (fullResponse) {
+                            conversation.messages.push({
+                                role: 'assistant',
+                                content: fullResponse,
+                                timestamp: Date.now()
+                            });
+                        }
                         res.write('data: [DONE]\n\n');
                         break;
                     }
 
                     // 解码新的数据块并添加到缓冲区
                     buffer += decoder.decode(value, { stream: true });
+                    console.log('Received chunk:', buffer);
                     
                     // 处理完整的行
                     const lines = buffer.split('\n');
@@ -294,7 +290,7 @@ app.get('/api/chat/:id/stream', async (req, res) => {
                         if (line.trim() === '') continue;
                         
                         if (line.startsWith('data: ')) {
-                            const data = line.slice(6);
+                            const data = line.slice(6).trim();
                             if (data === '[DONE]') {
                                 res.write('data: [DONE]\n\n');
                                 continue;
@@ -318,22 +314,9 @@ app.get('/api/chat/:id/stream', async (req, res) => {
                 reader.releaseLock();
             }
 
-            // 保存完整回复到对话历史
-            if (fullResponse) {
-                conversation.messages.push({
-                    role: 'assistant',
-                    content: fullResponse,
-                    timestamp: Date.now()
-                });
-            }
-
-            res.end();
-
         } catch (error) {
             clearTimeout(timeout);
             console.error('流式请求处理失败:', error);
-            
-            // 发送错误事件
             res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
         } finally {
             clearTimeout(timeout);
