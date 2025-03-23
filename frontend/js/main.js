@@ -90,6 +90,17 @@ async function sendMessage() {
             // 显示用户消息
             appendMessage(content, true);
             
+            // 确保当前对话存在
+            if (!currentConversation) {
+                currentConversation = {
+                    id: Date.now().toString(),
+                    title: '新对话',
+                    messages: [],
+                    mood: 'peaceful'
+                };
+                conversations.unshift(currentConversation);
+            }
+            
             // 更新当前对话
             currentConversation.messages.push({
                 content,
@@ -113,7 +124,7 @@ async function sendMessage() {
                 body: JSON.stringify({
                     content,
                     mood: currentConversation.mood,
-                    conversationId: currentConversation.id
+                    conversationId: currentConversation.id.toString() // 确保ID是字符串
                 })
             });
 
@@ -127,7 +138,7 @@ async function sendMessage() {
             }
 
             // 开始轮询获取AI响应
-            await startPolling(currentConversation.id);
+            await startPolling(currentConversation.id.toString());
         } catch (error) {
             console.error('发送消息失败:', error);
             showError('发送消息失败，请重试');
@@ -158,7 +169,16 @@ async function startPolling(conversationId) {
                 
                 if (!response.ok) {
                     if (response.status === 404) {
-                        throw new Error('对话不存在或已过期');
+                        // 如果对话不存在，创建新对话
+                        currentConversation = {
+                            id: Date.now().toString(),
+                            title: '新对话',
+                            messages: [],
+                            mood: 'peaceful'
+                        };
+                        conversations.unshift(currentConversation);
+                        saveConversation();
+                        throw new Error('对话已过期，已创建新对话');
                     }
                     throw new Error(`服务器响应错误: ${response.status}`);
                 }
@@ -534,31 +554,31 @@ function deleteConversation(conversationId) {
 
 // 创建新对话
 function createNewConversation() {
-  currentConversation = {
-    id: Date.now(),
-    title: '新对话',
-    messages: [],
-    mood: 'peaceful'
-  };
-  conversations.unshift(currentConversation); // 将新对话添加到开头
-  localStorage.setItem('conversations', JSON.stringify(conversations));
-  
-  // 清空消息区域并显示欢迎语
-  messagesContainer.innerHTML = `
-    <div class="welcome-message">
-      你好！我是你的AI生活教练。我可以帮助你提供生活建议、解决困扰、分享积极态度和情绪支持。请告诉我你现在的感受，我会根据你的心情提供相应的帮助。
-    </div>
-  `;
-  
-  // 重置心情按钮状态
-  moodButtons.forEach(btn => {
-    if (btn.dataset.mood === 'peaceful') {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
-  });
-  
-  // 更新历史列表
-  updateHistoryList();
+    currentConversation = {
+        id: Date.now().toString(), // 确保ID是字符串
+        title: '新对话',
+        messages: [],
+        mood: 'peaceful'
+    };
+    conversations.unshift(currentConversation);
+    localStorage.setItem('conversations', JSON.stringify(conversations));
+    
+    // 清空消息区域并显示欢迎语
+    messagesContainer.innerHTML = `
+        <div class="welcome-message">
+            你好！我是你的AI生活教练。我可以帮助你提供生活建议、解决困扰、分享积极态度和情绪支持。请告诉我你现在的感受，我会根据你的心情提供相应的帮助。
+        </div>
+    `;
+    
+    // 重置心情按钮状态
+    moodButtons.forEach(btn => {
+        if (btn.dataset.mood === 'peaceful') {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    
+    // 更新历史列表
+    updateHistoryList();
 } 
