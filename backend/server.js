@@ -9,11 +9,26 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+
+// 在Vercel环境中使用适当的端口
+const PORT = process.env.PORT || 3000;
 
 // 配置CORS
-app.use(cors());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://my-life-coach-with-ds-2.vercel.app', /\.vercel\.app$/] 
+    : 'http://localhost:3000',
+  methods: ['GET', 'POST'],
+  credentials: true
+}));
+
 app.use(express.json());
+
+// WebSocket服务器设置
+const wss = new WebSocket.Server({ 
+  server,
+  path: '/ws'
+});
 
 // 对话历史文件路径
 const HISTORY_FILE = path.join(__dirname, 'conversations.json');
@@ -143,6 +158,11 @@ const moodPrompts = {
     tired: "你感到疲惫，让我们来调整一下状态。"
 };
 
+// 健康检查端点
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 // WebSocket连接处理
 wss.on('connection', (ws, req) => {
     console.log('新的WebSocket连接');
@@ -153,7 +173,6 @@ wss.on('connection', (ws, req) => {
             const data = JSON.parse(message);
             console.log('收到消息:', data);
             
-            // 如果是新对话
             if (!currentConversation) {
                 currentConversation = {
                     id: Date.now(),
@@ -165,7 +184,6 @@ wss.on('connection', (ws, req) => {
                 console.log('创建新对话:', currentConversation.id);
             }
 
-            // 添加用户消息到对话历史
             currentConversation.messages.push({
                 content: data.content,
                 isUser: true,
@@ -173,18 +191,12 @@ wss.on('connection', (ws, req) => {
                 mood: data.mood
             });
 
-            // 更新对话标题
             if (currentConversation.messages.length === 1) {
                 currentConversation.title = data.content.slice(0, 20) + (data.content.length > 20 ? '...' : '');
             }
 
-            // 保存对话历史
-            saveConversations();
-
-            // 构建系统提示词
             const systemPrompt = moodPrompts[data.mood] || moodPrompts.peaceful;
             
-            // 构建消息历史
             const messages = [
                 { role: "system", content: systemPrompt },
                 ...currentConversation.messages.map(msg => ({
@@ -194,7 +206,6 @@ wss.on('connection', (ws, req) => {
             ];
 
             console.log('发送请求到API');
-            // 调用API
             const response = await fetch('https://api.deepseek.com/chat/completions', {
                 method: 'POST',
                 headers: {
@@ -213,7 +224,6 @@ wss.on('connection', (ws, req) => {
                 throw new Error(`API请求失败: ${response.status}`);
             }
 
-            // 处理流式响应
             let aiResponse = '';
             response.body.on('data', chunk => {
                 const lines = chunk.toString().split('\n');
@@ -221,16 +231,11 @@ wss.on('connection', (ws, req) => {
                     if (line.startsWith('data: ')) {
                         const data = line.slice(6);
                         if (data === '[DONE]') {
-                            // 添加AI回复到对话历史
                             currentConversation.messages.push({
                                 content: aiResponse,
                                 isUser: false,
                                 timestamp: Date.now()
                             });
-                            // 保存对话历史
-                            saveConversations();
-                            console.log('AI回复完成');
-                            // 发送完成消息
                             ws.send(JSON.stringify({
                                 type: 'done',
                                 content: aiResponse
@@ -253,35 +258,17 @@ wss.on('connection', (ws, req) => {
                     }
                 }
             });
-
-            response.body.on('end', () => {
-                console.log('响应流结束');
-            });
-
-            response.body.on('error', (error) => {
-                console.error('响应流错误:', error);
-                ws.send(JSON.stringify({
-                    type: 'error',
-                    content: '抱歉，处理响应时出现错误。'
-                }));
-            });
         } catch (error) {
             console.error('处理消息时出错:', error);
             ws.send(JSON.stringify({
                 type: 'error',
-                content: '抱歉，处理您的消息时出现错误。'
+                content: '处理消息时出错，请重试'
             }));
         }
     });
 
     ws.on('close', () => {
         console.log('WebSocket连接关闭');
-        // 保存对话历史
-        saveConversations();
-    });
-
-    ws.on('error', (error) => {
-        console.error('WebSocket错误:', error);
     });
 });
 
@@ -302,8 +289,13 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: '服务器内部错误' });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`服务器运行在端口 ${PORT}`);
-    console.log('WebSocket服务器已启动');
-}); 
+// 仅在非Vercel环境中启动服务器
+if (process.env.NODE_ENV !== 'production') {
+    server.listen(PORT, () => {
+        console.log(`服务器运行在端口 ${PORT}`);
+        console.log('WebSocket服务器已启动');
+    });
+}
+
+// 导出应用实例供Vercel使用
+module.exports = server; 

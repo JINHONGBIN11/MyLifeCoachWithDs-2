@@ -27,15 +27,22 @@ let currentConversation = {
 let conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
 
 // 更新连接状态
-function updateConnectionStatus(connected, showError = false) {
+function updateConnectionStatus(connected, maxRetriesReached = false) {
   isConnected = connected;
   sendButton.disabled = !connected;
+  
   if (connected) {
     sendButton.textContent = '发送';
     sendButton.classList.remove('disabled');
   } else {
-    sendButton.textContent = showError ? '连接失败，点击重试' : '连接中...';
+    sendButton.textContent = maxRetriesReached ? '连接失败，点击重试' : '连接中...';
     sendButton.classList.add('disabled');
+    if (maxRetriesReached) {
+      sendButton.onclick = () => {
+        reconnectAttempts = 0;
+        connectWebSocket();
+      };
+    }
   }
 }
 
@@ -43,7 +50,8 @@ function updateConnectionStatus(connected, showError = false) {
 function getWebSocketUrl() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    return `${protocol}//${host}`;
+    const path = '/ws';
+    return `${protocol}//${host}${path}`;
 }
 
 // 连接WebSocket
@@ -61,6 +69,9 @@ function connectWebSocket() {
         isConnected = true;
         reconnectAttempts = 0;
         updateConnectionStatus(true);
+        
+        // 连接成功后获取历史对话
+        fetchConversations();
     };
     
     ws.onclose = () => {
@@ -85,13 +96,40 @@ function connectWebSocket() {
     };
     
     ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'content') {
-            appendMessage(data.content, false);
-        } else if (data.type === 'done') {
-            console.log('AI回复完成');
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'content') {
+                appendMessage(data.content, false);
+            } else if (data.type === 'done') {
+                console.log('AI回复完成');
+                // 保存AI的完整回复到当前对话
+                const aiMessage = messagesContainer.lastElementChild.querySelector('.message-ai');
+                if (aiMessage) {
+                    currentConversation.messages.push({
+                        content: aiMessage.textContent,
+                        isUser: false,
+                        timestamp: Date.now()
+                    });
+                    // 保存对话到本地存储
+                    saveConversation();
+                }
+            } else if (data.type === 'error') {
+                showError(data.content);
+            }
+        } catch (error) {
+            console.error('处理消息时出错:', error);
+            showError('处理消息时出错');
         }
     };
+}
+
+// 显示错误消息
+function showError(message) {
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error-message';
+    errorDiv.textContent = message;
+    messagesContainer.appendChild(errorDiv);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
 // 创建消息元素
