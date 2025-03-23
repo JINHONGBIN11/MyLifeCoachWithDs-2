@@ -207,7 +207,7 @@ function updateHistoryList() {
       // 创建标题文本
       const titleSpan = document.createElement('span');
       const title = conv.messages && conv.messages.length > 0 
-        ? conv.messages.find(msg => msg.isUser)?.content.slice(0, 20) + (conv.messages.find(msg => msg.isUser)?.content.length > 20 ? '...' : '')
+        ? conv.messages.find(msg => msg.role === 'user')?.content.slice(0, 20) + (conv.messages.find(msg => msg.role === 'user')?.content.length > 20 ? '...' : '')
         : '新对话';
       titleSpan.textContent = title;
       
@@ -216,7 +216,7 @@ function updateHistoryList() {
       deleteBtn.className = 'delete-chat-btn';
       deleteBtn.textContent = '删除对话';
       deleteBtn.onclick = (e) => {
-        e.stopPropagation(); // 阻止事件冒泡
+        e.stopPropagation();
         deleteConversation(conv.id);
       };
       
@@ -228,7 +228,6 @@ function updateHistoryList() {
     });
   } catch (error) {
     console.error('更新历史列表失败:', error);
-    // 尝试从本地存储恢复对话列表
     try {
       const savedConversations = localStorage.getItem('conversations');
       if (savedConversations) {
@@ -247,7 +246,7 @@ function loadConversation(conversationId) {
     currentConversation = conversation;
     messagesContainer.innerHTML = '';
     conversation.messages.forEach(msg => {
-      const messageElement = createMessageElement(msg.content, msg.isUser);
+      const messageElement = createMessageElement(msg.content, msg.role === 'user');
       messagesContainer.appendChild(messageElement);
     });
     // 更新心情按钮状态
