@@ -180,11 +180,12 @@ async function sendMessage() {
         messagesContainer.appendChild(messageContainer);
 
         try {
-            // 创建 EventSource 连接
+            // 发送请求到流式API
             const response = await fetch('/api/chat/stream', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream'
                 },
                 body: JSON.stringify({
                     content,
@@ -202,34 +203,38 @@ async function sendMessage() {
             const decoder = new TextDecoder();
             let fullResponse = '';
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
 
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
 
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') continue;
 
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.error) {
-                                throw new Error(parsed.error);
+                            try {
+                                const parsed = JSON.parse(data);
+                                if (parsed.error) {
+                                    throw new Error(parsed.error);
+                                }
+                                if (parsed.content) {
+                                    fullResponse += parsed.content;
+                                    messageContent.textContent = fullResponse;
+                                    // 自动滚动到底部
+                                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                                }
+                            } catch (e) {
+                                console.error('解析流数据失败:', e);
                             }
-                            if (parsed.content) {
-                                fullResponse += parsed.content;
-                                messageContent.textContent = fullResponse;
-                                // 自动滚动到底部
-                                messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                            }
-                        } catch (e) {
-                            console.error('解析流数据失败:', e);
                         }
                     }
                 }
+            } finally {
+                reader.releaseLock();
             }
 
             // 保存完整回复到对话历史
