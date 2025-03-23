@@ -17,9 +17,8 @@ app.use(cors({
 
 app.use(express.json());
 
-// 存储对话历史和响应流
+// 内存存储
 const conversations = new Map();
-const responseStreams = new Map();
 
 // 心情映射
 const moodMap = {
@@ -46,172 +45,162 @@ const moodPrompts = {
 };
 
 // 处理聊天请求
-app.post('/api/chat', async (req, res) => {
-  try {
-    const { content, mood, conversationId } = req.body;
-    
-    if (!content || !conversationId) {
-      return res.status(400).json({ error: '缺少必要参数' });
-    }
-
-    if (!process.env.DEEPSEEK_API_KEY) {
-      return res.status(500).json({ error: 'API密钥未配置' });
-    }
-    
-    let conversation = conversations.get(conversationId);
-    if (!conversation) {
-      conversation = {
-        id: conversationId,
-        messages: [],
-        mood: mood || 'peaceful',
-        title: content.slice(0, 20) + (content.length > 20 ? '...' : '')
-      };
-      conversations.set(conversationId, conversation);
-    }
-    
-    conversation.messages.push({
-      content,
-      isUser: true,
-      timestamp: Date.now(),
-      mood
-    });
-    
-    const systemPrompt = moodPrompts[mood] || moodPrompts.peaceful;
-    const messages = [
-      { role: "system", content: systemPrompt },
-      ...conversation.messages.map(msg => ({
-        role: msg.isUser ? "user" : "assistant",
-        content: msg.content
-      }))
-    ];
-
-    console.log('发送请求到 DeepSeek API...');
-    console.log('消息列表:', messages);
-    
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-        'Accept': 'text/event-stream'
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: messages,
-        stream: true,
-        temperature: moodMap[mood] || 0.6,
-        max_tokens: 2000
-      })
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('DeepSeek API 错误响应:', errorText);
-      throw new Error(`API请求失败: ${response.status} - ${errorText}`);
-    }
-    
-    // 存储响应流
-    responseStreams.set(conversationId, {
-      stream: response.body,
-      buffer: '',
-      isDone: false,
-      createdAt: Date.now()
-    });
-    
-    res.json({ success: true });
-  } catch (error) {
-    console.error('处理聊天请求失败:', error);
-    res.status(500).json({ error: error.message || '处理聊天请求失败' });
-  }
-});
-
-// 获取流式响应
-app.get('/api/chat/:conversationId/stream', (req, res) => {
-  try {
-    const { conversationId } = req.params;
-    const streamData = responseStreams.get(conversationId);
-    
-    if (!streamData) {
-      return res.status(404).json({ error: '未找到响应流' });
-    }
-    
-    if (streamData.isDone) {
-      // 清理响应流
-      responseStreams.delete(conversationId);
-      return res.json({ type: 'done', content: streamData.buffer });
-    }
-    
-    // 处理新的数据块
-    let newContent = '';
-    streamData.stream.on('data', chunk => {
-      const lines = chunk.toString().split('\n');
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') {
-            streamData.isDone = true;
-            break;
-          } else {
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.choices && parsed.choices[0].delta.content) {
-                const content = parsed.choices[0].delta.content;
-                newContent += content;
-                streamData.buffer += content;
-              }
-            } catch (e) {
-              console.error('解析响应数据失败:', e);
-            }
-          }
+app.get('/api/chat', async (req, res) => {
+    try {
+        const { content, mood, conversationId } = req.query;
+        
+        if (!content || !conversationId) {
+            return res.status(400).json({ error: '缺少必要参数' });
         }
-      }
-    });
-    
-    // 等待一小段时间以收集数据
-    setTimeout(() => {
-      if (newContent) {
-        res.json({ type: 'content', content: newContent });
-      } else if (streamData.isDone) {
-        responseStreams.delete(conversationId);
-        res.json({ type: 'done', content: streamData.buffer });
-      } else {
-        res.json({ type: 'waiting' });
-      }
-    }, 500);
-  } catch (error) {
-    console.error('获取响应流失败:', error);
-    res.status(500).json({ error: '获取响应流失败' });
-  }
+
+        if (!process.env.DEEPSEEK_API_KEY) {
+            return res.status(500).json({ error: 'API密钥未配置' });
+        }
+        
+        let conversation = conversations.get(conversationId);
+        if (!conversation) {
+            conversation = {
+                id: conversationId,
+                messages: [],
+                mood: mood || 'peaceful',
+                title: content.slice(0, 20) + (content.length > 20 ? '...' : ''),
+                createdAt: Date.now()
+            };
+            conversations.set(conversationId, conversation);
+        }
+
+        // 添加用户消息
+        conversation.messages.push({
+            role: 'user',
+            content: content
+        });
+
+        // 准备系统消息
+        const systemMessage = {
+            role: 'system',
+            content: `你是一个富有同理心的AI生活教练。${moodPrompts[conversation.mood] || moodPrompts.peaceful}`
+        };
+
+        // 准备发送到API的消息
+        const messages = [
+            systemMessage,
+            ...conversation.messages.slice(-10) // 只发送最近的10条消息
+        ];
+
+        console.log('发送到DeepSeek API的消息列表:', messages);
+
+        // 设置响应头以支持流式传输
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        // 发送保持连接的消息
+        const keepAliveInterval = setInterval(() => {
+            if (!res.writableEnded) {
+                res.write(':\n\n'); // 发送 SSE keep-alive 注释
+            }
+        }, 15000); // 每15秒发送一次
+
+        try {
+            // 调用DeepSeek API
+            const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+                    'Accept': 'text/event-stream'
+                },
+                body: JSON.stringify({
+                    model: 'deepseek-chat',
+                    messages: messages,
+                    temperature: moodMap[conversation.mood] || 0.6,
+                    max_tokens: 2000,
+                    stream: true
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`API请求失败: ${response.status}`);
+            }
+
+            let aiResponse = '';
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n');
+
+                for (const line of lines) {
+                    if (line.startsWith(':')) continue; // 跳过 keep-alive 注释
+
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        if (data === '[DONE]') {
+                            res.write(`data: [DONE]\n\n`);
+                        } else {
+                            try {
+                                const parsed = JSON.parse(data);
+                                if (parsed.choices && parsed.choices[0].delta && parsed.choices[0].delta.content) {
+                                    const content = parsed.choices[0].delta.content;
+                                    aiResponse += content;
+                                    res.write(`data: ${JSON.stringify({ content })}\n\n`);
+                                }
+                            } catch (e) {
+                                console.error('解析响应数据失败:', e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 保存AI回复到对话历史
+            if (aiResponse) {
+                conversation.messages.push({
+                    role: 'assistant',
+                    content: aiResponse
+                });
+            }
+        } catch (error) {
+            console.error('处理流式响应时出错:', error);
+            res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+        } finally {
+            clearInterval(keepAliveInterval);
+            if (!res.writableEnded) {
+                res.end();
+            }
+        }
+    } catch (error) {
+        console.error('处理聊天请求时出错:', error);
+        res.status(500).json({ error: error.message || '处理请求失败' });
+    }
 });
 
 // 获取所有对话
 app.get('/api/conversations', (req, res) => {
-  try {
-    const conversationsArray = Array.from(conversations.values());
-    res.json(conversationsArray);
-  } catch (error) {
-    console.error('获取对话列表失败:', error);
-    res.status(500).json({ error: '获取对话列表失败' });
-  }
+    try {
+        const conversationsList = Array.from(conversations.values())
+            .sort((a, b) => b.createdAt - a.createdAt);
+        res.json(conversationsList);
+    } catch (error) {
+        console.error('获取对话列表失败:', error);
+        res.status(500).json({ error: '获取对话列表失败' });
+    }
 });
 
-// 健康检查端点
+// 健康检查
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
+    res.json({ status: 'ok' });
 });
 
-// 错误处理中间件
-app.use((err, req, res, next) => {
-  console.error('服务器错误:', err);
-  res.status(500).json({ error: '服务器内部错误' });
-});
-
-// 仅在非Vercel环境中启动服务器
+// 启动服务器
 if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(`服务器运行在端口 ${PORT}`);
-  });
+    app.listen(PORT, () => {
+        console.log(`服务器运行在端口 ${PORT}`);
+    });
 }
 
-// 导出应用实例供Vercel使用
 module.exports = app; 

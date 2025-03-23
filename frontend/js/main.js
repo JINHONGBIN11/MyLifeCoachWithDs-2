@@ -1,7 +1,7 @@
 // 状态变量
 let isPolling = false;
 let currentConversation = {
-  id: Date.now(),
+  id: Date.now().toString(),
   title: '新对话',
   messages: [],
   mood: 'peaceful'
@@ -85,65 +85,78 @@ function hideTypingIndicator() {
 async function sendMessage() {
     const content = messageInput.value.trim();
     
-    if (content && !isPolling) {
-        try {
-            // 显示用户消息
-            appendMessage(content, true);
-            
-            // 确保当前对话存在
-            if (!currentConversation) {
-                currentConversation = {
-                    id: Date.now().toString(),
-                    title: '新对话',
-                    messages: [],
-                    mood: 'peaceful'
-                };
-                conversations.unshift(currentConversation);
-            }
-            
-            // 更新当前对话
-            currentConversation.messages.push({
-                content,
-                isUser: true,
-                timestamp: Date.now()
-            });
-            
-            // 保存用户消息到本地存储
-            saveConversation();
-            
-            // 清空输入框并显示输入指示器
-            messageInput.value = '';
-            showTypingIndicator();
-            
-            // 发送到服务器
-            const response = await fetch('/api/chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    content,
-                    mood: currentConversation.mood,
-                    conversationId: currentConversation.id.toString() // 确保ID是字符串
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error('发送消息失败');
-            }
-
-            const responseData = await response.json();
-            if (responseData.error) {
-                throw new Error(responseData.error);
-            }
-
-            // 开始轮询获取AI响应
-            await startPolling(currentConversation.id.toString());
-        } catch (error) {
-            console.error('发送消息失败:', error);
-            showError('发送消息失败，请重试');
-            hideTypingIndicator();
+    if (!content) return;
+    
+    try {
+        // 显示用户消息
+        appendMessage(content, true);
+        
+        // 确保当前对话存在
+        if (!currentConversation) {
+            currentConversation = {
+                id: Date.now().toString(),
+                title: '新对话',
+                messages: [],
+                mood: 'peaceful'
+            };
+            conversations.unshift(currentConversation);
         }
+        
+        // 更新当前对话
+        currentConversation.messages.push({
+            role: 'user',
+            content: content
+        });
+        
+        // 保存用户消息到本地存储
+        saveConversation();
+        
+        // 清空输入框并显示输入指示器
+        messageInput.value = '';
+        showTypingIndicator();
+        
+        // 创建EventSource连接
+        const eventSource = new EventSource(`/api/chat?content=${encodeURIComponent(content)}&mood=${currentConversation.mood}&conversationId=${currentConversation.id}`);
+        
+        let aiResponse = '';
+        
+        eventSource.onmessage = (event) => {
+            try {
+                if (event.data === '[DONE]') {
+                    eventSource.close();
+                    hideTypingIndicator();
+                    
+                    // 保存AI回复到对话历史
+                    if (aiResponse) {
+                        currentConversation.messages.push({
+                            role: 'assistant',
+                            content: aiResponse
+                        });
+                        saveConversation();
+                    }
+                    return;
+                }
+                
+                const data = JSON.parse(event.data);
+                if (data.content) {
+                    aiResponse += data.content;
+                    appendMessage(data.content, false);
+                }
+            } catch (error) {
+                console.error('处理SSE消息失败:', error);
+            }
+        };
+        
+        eventSource.onerror = (error) => {
+            console.error('SSE连接错误:', error);
+            eventSource.close();
+            hideTypingIndicator();
+            showError('获取AI响应失败，请重试');
+        };
+    } catch (error) {
+        console.error('发送消息失败:', error);
+        showError('发送消息失败，请重试');
+        hideTypingIndicator();
     }
 }
 
