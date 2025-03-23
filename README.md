@@ -37,6 +37,16 @@ npm install
 DEEPSEEK_API_KEY=你的API密钥
 ```
 
+**部署到Vercel时的注意事项：**
+
+在Vercel部署时，需要在Vercel平台的项目设置中添加环境变量DEEPSEEK_API_KEY，而不是依赖vercel.json中的配置。步骤如下：
+
+1. 登录Vercel平台
+2. 进入项目设置
+3. 点击「Environment Variables」选项
+4. 添加名为`DEEPSEEK_API_KEY`的环境变量，值为你的DeepSeek API密钥
+5. 保存并重新部署项目
+
 4. 启动服务器
 ```bash
 cd backend
@@ -75,4 +85,4 @@ node server.js
 
 ## 许可证
 
-MIT License 
+MIT License
