@@ -45,9 +45,11 @@ const moodPrompts = {
 app.post('/api/chat', async (req, res) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 9000); // 9秒超时，Vercel 限制为10秒
+    let conversationId = null;
 
     try {
-        const { content, mood, conversationId } = req.body;
+        const { content, mood, conversationId: reqConversationId } = req.body;
+        conversationId = reqConversationId;
         
         if (!content || !conversationId) {
             clearTimeout(timeout);
@@ -169,7 +171,8 @@ app.post('/api/chat', async (req, res) => {
         console.error('请求处理失败:', {
             error: error.message,
             stack: error.stack,
-            conversationId
+            conversationId: conversationId || 'unknown',
+            requestId: `req_${Date.now().toString(36)}`
         });
         
         return res.status(statusCode).json({
