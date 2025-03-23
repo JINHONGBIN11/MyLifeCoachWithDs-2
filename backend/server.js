@@ -45,9 +45,9 @@ const moodPrompts = {
 };
 
 // 处理聊天请求
-app.get('/api/chat', async (req, res) => {
+app.post('/api/chat', async (req, res) => {
     try {
-        const { content, mood, conversationId } = req.query;
+        const { content, mood, conversationId } = req.body;
         
         if (!content || !conversationId) {
             return res.status(400).json({ error: '缺少必要参数' });
@@ -113,14 +113,19 @@ app.get('/api/chat', async (req, res) => {
                 body: JSON.stringify({
                     model: 'deepseek-chat',
                     messages: messages,
+                    stream: true,
                     temperature: moodMap[conversation.mood] || 0.6,
                     max_tokens: 2000,
-                    stream: true
+                    top_p: 0.7,
+                    presence_penalty: 0,
+                    frequency_penalty: 0
                 })
             });
 
             if (!response.ok) {
-                throw new Error(`API请求失败: ${response.status}`);
+                const errorText = await response.text();
+                console.error('DeepSeek API 错误响应:', errorText);
+                throw new Error(`API请求失败: ${response.status} - ${errorText}`);
             }
 
             let aiResponse = '';
@@ -151,6 +156,7 @@ app.get('/api/chat', async (req, res) => {
                                 }
                             } catch (e) {
                                 console.error('解析响应数据失败:', e);
+                                console.error('原始数据:', data);
                             }
                         }
                     }

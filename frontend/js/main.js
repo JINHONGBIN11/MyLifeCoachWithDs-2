@@ -115,47 +115,72 @@ async function sendMessage() {
         messageInput.value = '';
         showTypingIndicator();
         
-        // 创建EventSource连接
-        const eventSource = new EventSource(`/api/chat?content=${encodeURIComponent(content)}&mood=${currentConversation.mood}&conversationId=${currentConversation.id}`);
-        
+        // 发送POST请求到服务器
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream'
+            },
+            body: JSON.stringify({
+                content,
+                mood: currentConversation.mood,
+                conversationId: currentConversation.id
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`服务器响应错误: ${response.status} - ${errorText}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
         let aiResponse = '';
-        
-        eventSource.onmessage = (event) => {
-            try {
-                if (event.data === '[DONE]') {
-                    eventSource.close();
-                    hideTypingIndicator();
-                    
-                    // 保存AI回复到对话历史
-                    if (aiResponse) {
-                        currentConversation.messages.push({
-                            role: 'assistant',
-                            content: aiResponse
-                        });
-                        saveConversation();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith(':')) continue; // 跳过 keep-alive 注释
+
+                if (line.startsWith('data: ')) {
+                    const data = line.slice(6);
+                    if (data === '[DONE]') {
+                        // 保存AI回复到对话历史
+                        if (aiResponse) {
+                            currentConversation.messages.push({
+                                role: 'assistant',
+                                content: aiResponse
+                            });
+                            saveConversation();
+                        }
+                        hideTypingIndicator();
+                        break;
                     }
-                    return;
+
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed.content) {
+                            aiResponse += parsed.content;
+                            appendMessage(parsed.content, false);
+                        } else if (parsed.error) {
+                            throw new Error(parsed.error);
+                        }
+                    } catch (e) {
+                        console.error('解析SSE消息失败:', e);
+                        console.error('原始数据:', data);
+                    }
                 }
-                
-                const data = JSON.parse(event.data);
-                if (data.content) {
-                    aiResponse += data.content;
-                    appendMessage(data.content, false);
-                }
-            } catch (error) {
-                console.error('处理SSE消息失败:', error);
             }
-        };
-        
-        eventSource.onerror = (error) => {
-            console.error('SSE连接错误:', error);
-            eventSource.close();
-            hideTypingIndicator();
-            showError('获取AI响应失败，请重试');
-        };
+        }
     } catch (error) {
         console.error('发送消息失败:', error);
-        showError('发送消息失败，请重试');
+        showError(`发送消息失败: ${error.message}`);
         hideTypingIndicator();
     }
 }
