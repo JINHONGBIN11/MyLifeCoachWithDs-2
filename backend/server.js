@@ -55,14 +55,25 @@ const moodPrompts = {
 
 // 处理聊天请求
 app.post('/api/chat', async (req, res) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9000); // 9秒超时，Vercel 限制为10秒
+
     try {
         const { content, mood, conversationId } = req.body;
         
         if (!content || !conversationId) {
-            return res.status(400).json({ error: '缺少必要参数' });
+            clearTimeout(timeout);
+            return res.status(400).json({ 
+                error: '缺少必要参数',
+                details: {
+                    content: !content ? '消息内容不能为空' : undefined,
+                    conversationId: !conversationId ? '会话ID不能为空' : undefined
+                }
+            });
         }
 
         if (!process.env.DEEPSEEK_API_KEY) {
+            clearTimeout(timeout);
             return res.status(500).json({ error: 'API密钥未配置' });
         }
         
@@ -93,12 +104,8 @@ app.post('/api/chat', async (req, res) => {
         // 准备发送到API的消息
         const messages = [
             systemMessage,
-            ...conversation.messages.slice(-5) // 只发送最近的5条消息以减少处理时间
+            ...conversation.messages.slice(-3) // 只发送最近的3条消息以减少处理时间
         ];
-
-        // 设置超时
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 50000); // 50秒超时
 
         try {
             // 调用DeepSeek API
@@ -113,8 +120,10 @@ app.post('/api/chat', async (req, res) => {
                     model: 'deepseek-chat',
                     messages: messages,
                     temperature: moodMap[conversation.mood] || 0.6,
-                    max_tokens: 500,
-                    stream: false
+                    max_tokens: 300, // 减少token数以加快响应
+                    stream: false,
+                    presence_penalty: 0.6, // 增加回复的多样性
+                    frequency_penalty: 0.6 // 减少重复内容
                 }),
                 signal: controller.signal
             });
@@ -123,17 +132,12 @@ app.post('/api/chat', async (req, res) => {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error('DeepSeek API 错误响应:', errorText);
                 throw new Error(`API请求失败: ${response.status} - ${errorText}`);
             }
 
             const data = await response.json();
             
-            if (data.error) {
-                throw new Error(data.error.message || '未知错误');
-            }
-
-            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            if (!data.choices?.[0]?.message?.content) {
                 throw new Error('API响应格式错误');
             }
 
@@ -146,8 +150,8 @@ app.post('/api/chat', async (req, res) => {
                 timestamp: Date.now()
             });
 
-            // 返回成功响应
-            res.json({
+            // 立即返回响应
+            return res.json({
                 status: 'success',
                 content: aiResponse,
                 timestamp: Date.now()
@@ -155,62 +159,35 @@ app.post('/api/chat', async (req, res) => {
 
         } catch (error) {
             clearTimeout(timeout);
-            
-            let errorDetails = {
-                type: error.name,
-                message: error.message,
-                timestamp: new Date().toISOString(),
-                conversationId: conversationId
-            };
-            
-            if (error.name === 'AbortError') {
-                errorDetails.code = 'TIMEOUT';
-                errorDetails.message = 'API请求超时，请稍后重试';
-            } else if (error.response) {
-                errorDetails.code = 'API_ERROR';
-                errorDetails.status = error.response.status;
-            } else if (error.request) {
-                errorDetails.code = 'NETWORK_ERROR';
-            } else {
-                errorDetails.code = 'UNKNOWN_ERROR';
-            }
-            
-            throw errorDetails;
+            throw error;
         }
     } catch (error) {
-        let statusCode = 500;
-        let errorResponse = {
-            error: error.message || '处理请求失败',
-            code: error.code || 'INTERNAL_ERROR',
-            timestamp: Date.now(),
-            requestId: `req_${Date.now().toString(36)}`
-        };
+        clearTimeout(timeout);
         
-        switch (error.code) {
-            case 'TIMEOUT':
-                statusCode = 504;
-                break;
-            case 'API_ERROR':
-                statusCode = error.status || 500;
-                break;
-            case 'NETWORK_ERROR':
-                statusCode = 503;
-                break;
-            case 'UNAUTHORIZED':
-                statusCode = 401;
-                break;
-            case 'RATE_LIMIT':
-                statusCode = 429;
-                break;
+        let statusCode = 500;
+        let errorMessage = '处理请求失败';
+        
+        if (error.name === 'AbortError') {
+            statusCode = 504;
+            errorMessage = 'API请求超时，请稍后重试';
+        } else if (error.message.includes('API请求失败')) {
+            statusCode = 502;
+            errorMessage = error.message;
+        } else if (error.code === 'ECONNREFUSED') {
+            statusCode = 503;
+            errorMessage = '无法连接到API服务器';
         }
         
         console.error('请求处理失败:', {
-            ...errorResponse,
-            conversationId: conversationId,
-            stack: error.stack
+            error: error.message,
+            stack: error.stack,
+            conversationId
         });
         
-        res.status(statusCode).json(errorResponse);
+        return res.status(statusCode).json({
+            error: errorMessage,
+            requestId: `req_${Date.now().toString(36)}`
+        });
     }
 });
 
