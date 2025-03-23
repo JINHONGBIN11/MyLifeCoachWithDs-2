@@ -6,7 +6,7 @@ const fetch = require('node-fetch');
 const app = express();
 
 // 在Vercel环境中使用适当的端口
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // 配置CORS
 app.use(cors({
@@ -16,6 +16,15 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// 静态文件服务 - 根据环境调整路径
+const frontendPath = process.env.NODE_ENV === 'production' ? './frontend' : '../frontend';
+app.use(express.static(frontendPath));
+
+// 根路径处理
+app.get('/', (req, res) => {
+    res.sendFile('index.html', { root: frontendPath });
+});
 
 // 内存存储
 const conversations = new Map();
@@ -163,16 +172,57 @@ app.get('/api/conversations', (req, res) => {
     }
 });
 
+// 心情分析API
+app.get('/api/mood-analysis', (req, res) => {
+    try {
+        // 从对话历史中提取心情数据
+        const moodData = [];
+        conversations.forEach(conv => {
+            if (conv.mood) {
+                moodData.push({
+                    conversationId: conv.id,
+                    mood: conv.mood,
+                    score: moodMap[conv.mood] || 0.5,
+                    timestamp: conv.createdAt
+                });
+            }
+        });
+        
+        // 计算心情统计数据
+        const moodDistribution = {};
+        let totalScore = 0;
+        
+        moodData.forEach(item => {
+            moodDistribution[item.mood] = (moodDistribution[item.mood] || 0) + 1;
+            totalScore += item.score;
+        });
+        
+        const average = moodData.length > 0 ? totalScore / moodData.length : 0;
+        const mostFrequent = Object.entries(moodDistribution)
+            .sort(([,a], [,b]) => b - a)[0]?.[0] || 'peaceful';
+        
+        res.json({
+            moodData,
+            moodStats: {
+                average,
+                mostFrequent,
+                moodDistribution
+            }
+        });
+    } catch (error) {
+        console.error('获取心情分析失败:', error);
+        res.status(500).json({ error: '获取心情分析失败' });
+    }
+});
+
 // 健康检查
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
 });
 
 // 启动服务器
-if (process.env.NODE_ENV !== 'production') {
-    app.listen(PORT, () => {
-        console.log(`服务器运行在端口 ${PORT}`);
-    });
-}
+app.listen(PORT, () => {
+    console.log(`服务器运行在端口 ${PORT}`);
+});
 
-module.exports = app; 
+module.exports = app;

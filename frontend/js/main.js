@@ -339,6 +339,7 @@ async function fetchConversations() {
 async function fetchMoodAnalysis() {
   try {
     console.log('开始获取心情分析...');
+    // 使用相对路径，适应不同环境
     const response = await fetch('/api/mood-analysis');
     console.log('收到响应:', response.status);
     
@@ -534,4 +535,4 @@ async function testServerConnection() {
         console.error('服务器连接测试失败:', error);
         showError(`服务器连接测试失败: ${error.message}\n请检查服务器是否正常运行。`);
     }
-} 
+}

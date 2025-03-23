@@ -37,7 +37,8 @@ const moodColors = {
 // 获取心情数据
 async function fetchMoodData() {
     try {
-        const response = await fetch('http://localhost:3000/api/mood-analysis');
+        // 使用相对路径，适应不同环境
+        const response = await fetch('/api/mood-analysis');
         const data = await response.json();
         return data;
     } catch (error) {
@@ -226,4 +227,4 @@ conversationSelect.addEventListener('change', async () => {
 });
 
 // 页面加载完成后初始化
-document.addEventListener('DOMContentLoaded', initializePage); 
+document.addEventListener('DOMContentLoaded', initializePage);
