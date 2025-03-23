@@ -1,15 +1,5 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "backend/server.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "frontend/**",
-      "use": "@vercel/static"
-    }
-  ],
   "routes": [
     {
       "src": "/ws",
@@ -30,10 +20,10 @@
   "regions": ["hkg1"],
   "functions": {
     "api/chat/index.js": {
-      "maxDuration": 60
+      "maxDuration": 10
     },
     "api/chat/[id]/stream.js": {
-      "maxDuration": 60
+      "maxDuration": 10
     }
   }
 }
