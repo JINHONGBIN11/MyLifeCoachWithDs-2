@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Life Coach - 你的个人成长助手</title>
+    <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+    <div class="chat-container">
+        <header class="chat-header">
+            <h1>AI Life Coach</h1>
+            <p>你的个人成长助手，随时为你提供专业建议</p>
+            <a href="mood-analysis.html" class="analysis-link" aria-label="查看心情分析">查看心情分析</a>
+        </header>
+        
+        <main class="chat-main">
+            <aside class="chat-sidebar">
+                <div class="sidebar">
+                    <div class="history-section">
+                        <div class="history-header">
+                            <h3>历史对话</h3>
+                            <button id="newChatBtn" class="new-chat-btn">
+                                <i class="fas fa-plus"></i> 新对话
+                            </button>
+                        </div>
+                        <div id="historyList" class="history-list"></div>
+                    </div>
+                    <section class="mood-analysis-section">
+                        <button class="mood-analysis-btn" aria-label="查看心情分析总结">心情分析总结</button>
+                        <div class="mood-analysis-content" role="region" aria-label="心情分析结果"></div>
+                    </section>
+                </div>
+            </aside>
+            
+            <section class="chat-content">
+                <div class="messages-container" role="log" aria-label="对话内容">
+                    <!-- 欢迎消息 -->
+                    <div class="message">
+                        <div class="message-ai welcome-message">
+                            <p>你好！我是你的AI生活教练。我可以帮助你：</p>
+                            <ul>
+                                <li>分享你的困扰和烦恼</li>
+                                <li>获取专业的建议和指导</li>
+                                <li>记录你的成长历程</li>
+                                <li>进行深度对话和反思</li>
+                            </ul>
+                            <p>请告诉我你现在的心情，这样我可以更好地帮助你。</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="input-container">
+                    <div class="mood-selector" role="group" aria-label="选择心情">
+                        <button class="mood-btn" data-mood="happy" aria-label="开心">😊 开心</button>
+                        <button class="mood-btn" data-mood="sad" aria-label="难过">😢 难过</button>
+                        <button class="mood-btn" data-mood="angry" aria-label="生气">😠 生气</button>
+                        <button class="mood-btn" data-mood="anxious" aria-label="焦虑">😰 焦虑</button>
+                        <button class="mood-btn" data-mood="peaceful" aria-label="平静">😌 平静</button>
+                        <button class="mood-btn" data-mood="excited" aria-label="兴奋">🤩 兴奋</button>
+                        <button class="mood-btn" data-mood="tired" aria-label="疲惫">😫 疲惫</button>
+                        <button class="mood-btn" data-mood="confused" aria-label="困惑">🤔 困惑</button>
+                    </div>
+                    <div class="input-wrapper">
+                        <textarea
+                            class="message-input"
+                            placeholder="输入你的问题或困扰..."
+                            rows="1"
+                            aria-label="消息输入框"
+                        ></textarea>
+                        <button class="send-button" disabled aria-label="发送消息">发送</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    
+    <script src="js/main.js"></script>
+</body>
+</html> 

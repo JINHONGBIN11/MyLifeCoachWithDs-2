@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>心情分析 - AI Life Coach</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="stylesheet" href="styles/mood-analysis.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="analysis-container">
+        <div class="analysis-header">
+            <h1>心情分析</h1>
+            <p>了解你的情绪变化趋势</p>
+        </div>
+        
+        <div class="analysis-content">
+            <div class="analysis-sidebar">
+                <div class="analysis-filters">
+                    <h3>筛选</h3>
+                    <div class="filter-group">
+                        <label>时间范围</label>
+                        <select id="timeRange">
+                            <option value="all">全部时间</option>
+                            <option value="week">最近一周</option>
+                            <option value="month">最近一月</option>
+                            <option value="year">最近一年</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>对话选择</label>
+                        <select id="conversationSelect">
+                            <option value="all">所有对话</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="mood-stats">
+                    <h3>心情统计</h3>
+                    <div class="stat-item">
+                        <span class="stat-label">平均心情</span>
+                        <span class="stat-value" id="averageMood">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">最常见心情</span>
+                        <span class="stat-value" id="mostFrequentMood">-</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="analysis-main">
+                <div class="chart-container">
+                    <canvas id="moodChart"></canvas>
+                </div>
+                
+                <div class="mood-distribution">
+                    <h3>心情分布</h3>
+                    <div class="distribution-chart">
+                        <canvas id="distributionChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="js/mood-analysis.js"></script>
+</body>
+</html> 
