@@ -133,59 +133,27 @@ async function sendMessage() {
             throw new Error(`服务器响应错误: ${response.status}`);
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let aiResponse = '';
+        const data = await response.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
 
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                    if (line.trim() === '' || line.startsWith(':')) continue;
-
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') {
-                            // 保存AI回复到对话历史
-                            if (aiResponse) {
-                                currentConversation.messages.push({
-                                    role: 'assistant',
-                                    content: aiResponse
-                                });
-                                saveConversation();
-                            }
-                            hideTypingIndicator();
-                            break;
-                        }
-
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.content) {
-                                aiResponse += parsed.content;
-                                appendMessage(parsed.content, false);
-                            } else if (parsed.error) {
-                                throw new Error(parsed.error);
-                            }
-                        } catch (e) {
-                            console.error('解析响应数据失败:', e, '原始数据:', data);
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('处理流式响应时出错:', error);
-            throw error;
-        } finally {
-            hideTypingIndicator();
+        if (data.content) {
+            // 显示AI回复
+            appendMessage(data.content, false);
+            
+            // 保存AI回复到对话历史
+            currentConversation.messages.push({
+                role: 'assistant',
+                content: data.content
+            });
+            saveConversation();
         }
     } catch (error) {
         console.error('发送消息失败:', error);
         showError(`发送消息失败: ${error.message}`);
+    } finally {
         hideTypingIndicator();
     }
 }

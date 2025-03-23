@@ -89,36 +89,20 @@ app.post('/api/chat', async (req, res) => {
 
         console.log('发送到DeepSeek API的消息列表:', messages);
 
-        // 设置响应头以支持流式传输
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-
-        // 发送保持连接的消息
-        const keepAliveInterval = setInterval(() => {
-            if (!res.writableEnded) {
-                res.write(':\n\n'); // 发送 SSE keep-alive 注释
-            }
-        }, 15000); // 每15秒发送一次
-
         try {
             // 调用DeepSeek API
             const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-                    'Accept': 'text/event-stream'
+                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
                 },
                 body: JSON.stringify({
                     model: 'deepseek-chat',
                     messages: messages,
-                    stream: true,
                     temperature: moodMap[conversation.mood] || 0.6,
                     max_tokens: 2000,
-                    top_p: 0.7,
-                    presence_penalty: 0,
-                    frequency_penalty: 0
+                    stream: false
                 })
             });
 
@@ -128,56 +112,26 @@ app.post('/api/chat', async (req, res) => {
                 throw new Error(`API请求失败: ${response.status} - ${errorText}`);
             }
 
-            let aiResponse = '';
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                    if (line.startsWith(':')) continue; // 跳过 keep-alive 注释
-
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') {
-                            res.write(`data: [DONE]\n\n`);
-                        } else {
-                            try {
-                                const parsed = JSON.parse(data);
-                                if (parsed.choices && parsed.choices[0].delta && parsed.choices[0].delta.content) {
-                                    const content = parsed.choices[0].delta.content;
-                                    aiResponse += content;
-                                    res.write(`data: ${JSON.stringify({ content })}\n\n`);
-                                }
-                            } catch (e) {
-                                console.error('解析响应数据失败:', e);
-                                console.error('原始数据:', data);
-                            }
-                        }
-                    }
-                }
+            const data = await response.json();
+            
+            if (data.error) {
+                throw new Error(data.error.message || '未知错误');
             }
+
+            const aiResponse = data.choices[0].message.content;
 
             // 保存AI回复到对话历史
-            if (aiResponse) {
-                conversation.messages.push({
-                    role: 'assistant',
-                    content: aiResponse
-                });
-            }
+            conversation.messages.push({
+                role: 'assistant',
+                content: aiResponse
+            });
+
+            // 返回响应
+            res.json({ content: aiResponse });
+
         } catch (error) {
-            console.error('处理流式响应时出错:', error);
-            res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
-        } finally {
-            clearInterval(keepAliveInterval);
-            if (!res.writableEnded) {
-                res.end();
-            }
+            console.error('调用DeepSeek API时出错:', error);
+            res.status(500).json({ error: error.message || '处理请求失败' });
         }
     } catch (error) {
         console.error('处理聊天请求时出错:', error);
