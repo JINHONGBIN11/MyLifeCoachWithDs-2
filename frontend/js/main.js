@@ -368,6 +368,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // 初始化历史对话列表
     fetchConversations();
     
+    // 测试服务器连接
+    testServerConnection();
+    
     // 显示欢迎消息
     if (!currentConversation.messages.length) {
         messagesContainer.innerHTML = `
@@ -581,4 +584,45 @@ function createNewConversation() {
     
     // 更新历史列表
     updateHistoryList();
+}
+
+// 测试服务器连接
+async function testServerConnection() {
+    try {
+        showError('正在测试服务器连接...');
+        
+        // 测试健康检查端点
+        const healthResponse = await fetch('/api/health');
+        if (!healthResponse.ok) {
+            throw new Error(`健康检查失败: ${healthResponse.status}`);
+        }
+        
+        // 测试对话列表端点
+        const conversationsResponse = await fetch('/api/conversations');
+        if (!conversationsResponse.ok) {
+            throw new Error(`对话列表获取失败: ${conversationsResponse.status}`);
+        }
+        
+        // 测试发送消息
+        const testResponse = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                content: '测试消息',
+                mood: 'peaceful',
+                conversationId: 'test-' + Date.now().toString()
+            })
+        });
+        
+        if (!testResponse.ok) {
+            throw new Error(`消息发送测试失败: ${testResponse.status}`);
+        }
+        
+        showError('服务器连接测试成功！所有API端点都正常工作。');
+    } catch (error) {
+        console.error('服务器连接测试失败:', error);
+        showError(`服务器连接测试失败: ${error.message}\n请检查服务器是否正常运行。`);
+    }
 } 
