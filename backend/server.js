@@ -1,14 +1,9 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const WebSocket = require('ws');
-const http = require('http');
 const fetch = require('node-fetch');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
-const server = http.createServer(app);
 
 // 在Vercel环境中使用适当的端口
 const PORT = process.env.PORT || 3000;
@@ -22,40 +17,9 @@ app.use(cors({
 
 app.use(express.json());
 
-// 存储对话历史（使用内存存储，因为 Vercel 是无状态的）
-let conversations = new Map();
-
-// WebSocket服务器设置
-const wss = new WebSocket.Server({ 
-  server,
-  path: '/ws',
-  clientTracking: true
-});
-
-// 对话历史文件路径
-const HISTORY_FILE = path.join(__dirname, 'conversations.json');
-
-// 加载历史对话
-try {
-    if (fs.existsSync(HISTORY_FILE)) {
-        const historyData = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
-        conversations = new Map(Object.entries(historyData));
-        console.log('成功加载历史对话');
-    }
-} catch (error) {
-    console.error('加载历史对话失败:', error);
-}
-
-// 保存对话历史
-function saveConversations() {
-    try {
-        const historyData = Object.fromEntries(conversations);
-        fs.writeFileSync(HISTORY_FILE, JSON.stringify(historyData, null, 2));
-        console.log('成功保存对话历史');
-    } catch (error) {
-        console.error('保存对话历史失败:', error);
-    }
-}
+// 存储对话历史和响应流
+const conversations = new Map();
+const responseStreams = new Map();
 
 // 心情映射
 const moodMap = {
@@ -69,82 +33,6 @@ const moodMap = {
     tired: 0.5
 };
 
-// 心情分析路由
-app.get('/api/mood-analysis/:conversationId', (req, res) => {
-    console.log('收到心情分析请求:', req.params.conversationId);
-    const conversation = conversations.get(req.params.conversationId);
-    if (!conversation) {
-        console.log('对话不存在');
-        return res.status(404).json({ error: '对话不存在' });
-    }
-
-    // 分析心情变化
-    const moodData = conversation.messages.map(msg => ({
-        timestamp: msg.timestamp,
-        mood: msg.mood || conversation.mood,
-        score: moodMap[msg.mood || conversation.mood]
-    }));
-
-    // 计算心情统计
-    const moodStats = {
-        average: moodData.reduce((acc, curr) => acc + curr.score, 0) / moodData.length,
-        mostFrequent: getMostFrequentMood(moodData),
-        moodDistribution: getMoodDistribution(moodData)
-    };
-
-    console.log('返回心情分析结果');
-    res.json({
-        moodData,
-        moodStats
-    });
-});
-
-// 获取所有对话的心情分析
-app.get('/api/mood-analysis', (req, res) => {
-    console.log('收到所有对话的心情分析请求');
-    const allMoodData = [];
-    conversations.forEach((conv, id) => {
-        const moodData = conv.messages.map(msg => ({
-            conversationId: id,
-            timestamp: msg.timestamp,
-            mood: msg.mood || conv.mood,
-            score: moodMap[msg.mood || conv.mood]
-        }));
-        allMoodData.push(...moodData);
-    });
-
-    const moodStats = {
-        average: allMoodData.reduce((acc, curr) => acc + curr.score, 0) / allMoodData.length,
-        mostFrequent: getMostFrequentMood(allMoodData),
-        moodDistribution: getMoodDistribution(allMoodData)
-    };
-
-    console.log('返回所有对话的心情分析结果');
-    res.json({
-        moodData: allMoodData,
-        moodStats
-    });
-});
-
-// 辅助函数：获取最频繁的心情
-function getMostFrequentMood(moodData) {
-    const moodCounts = {};
-    moodData.forEach(data => {
-        moodCounts[data.mood] = (moodCounts[data.mood] || 0) + 1;
-    });
-    return Object.entries(moodCounts)
-        .sort(([,a], [,b]) => b - a)[0][0];
-}
-
-// 辅助函数：获取心情分布
-function getMoodDistribution(moodData) {
-    const distribution = {};
-    moodData.forEach(data => {
-        distribution[data.mood] = (distribution[data.mood] || 0) + 1;
-    });
-    return distribution;
-}
-
 // 心情对应的系统提示词
 const moodPrompts = {
     happy: "你现在心情愉快，让我们继续保持这种积极的状态。",
@@ -157,121 +45,126 @@ const moodPrompts = {
     tired: "你感到疲惫，让我们来调整一下状态。"
 };
 
-// 健康检查端点
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
+// 处理聊天请求
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { content, mood, conversationId } = req.body;
+    
+    let conversation = conversations.get(conversationId);
+    if (!conversation) {
+      conversation = {
+        id: conversationId,
+        messages: [],
+        mood: mood || 'peaceful',
+        title: content.slice(0, 20) + (content.length > 20 ? '...' : '')
+      };
+      conversations.set(conversationId, conversation);
+    }
+    
+    conversation.messages.push({
+      content,
+      isUser: true,
+      timestamp: Date.now(),
+      mood
+    });
+    
+    const systemPrompt = moodPrompts[mood] || moodPrompts.peaceful;
+    const messages = [
+      { role: "system", content: systemPrompt },
+      ...conversation.messages.map(msg => ({
+        role: msg.isUser ? "user" : "assistant",
+        content: msg.content
+      }))
+    ];
+    
+    const response = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: messages,
+        stream: true
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`API请求失败: ${response.status}`);
+    }
+    
+    // 存储响应流
+    responseStreams.set(conversationId, {
+      stream: response.body,
+      buffer: '',
+      isDone: false
+    });
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('处理聊天请求失败:', error);
+    res.status(500).json({ error: '处理聊天请求失败' });
+  }
 });
 
-// WebSocket连接处理
-wss.on('connection', (ws) => {
-    console.log('新的WebSocket连接');
-    let currentConversation = null;
-
-    ws.on('message', async (message) => {
-        try {
-            const data = JSON.parse(message);
-            console.log('收到消息:', data);
-            
-            if (!currentConversation) {
-                currentConversation = {
-                    id: Date.now(),
-                    messages: [],
-                    mood: data.mood || 'peaceful',
-                    title: '新对话'
-                };
-                conversations.set(currentConversation.id, currentConversation);
-                console.log('创建新对话:', currentConversation.id);
+// 获取流式响应
+app.get('/api/chat/:conversationId/stream', (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const streamData = responseStreams.get(conversationId);
+    
+    if (!streamData) {
+      return res.status(404).json({ error: '未找到响应流' });
+    }
+    
+    if (streamData.isDone) {
+      // 清理响应流
+      responseStreams.delete(conversationId);
+      return res.json({ type: 'done', content: streamData.buffer });
+    }
+    
+    // 处理新的数据块
+    let newContent = '';
+    streamData.stream.on('data', chunk => {
+      const lines = chunk.toString().split('\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') {
+            streamData.isDone = true;
+            break;
+          } else {
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.choices && parsed.choices[0].delta.content) {
+                const content = parsed.choices[0].delta.content;
+                newContent += content;
+                streamData.buffer += content;
+              }
+            } catch (e) {
+              console.error('解析响应数据失败:', e);
             }
-
-            currentConversation.messages.push({
-                content: data.content,
-                isUser: true,
-                timestamp: Date.now(),
-                mood: data.mood
-            });
-
-            if (currentConversation.messages.length === 1) {
-                currentConversation.title = data.content.slice(0, 20) + (data.content.length > 20 ? '...' : '');
-            }
-
-            const systemPrompt = moodPrompts[data.mood] || moodPrompts.peaceful;
-            
-            const messages = [
-                { role: "system", content: systemPrompt },
-                ...currentConversation.messages.map(msg => ({
-                    role: msg.isUser ? "user" : "assistant",
-                    content: msg.content
-                }))
-            ];
-
-            console.log('发送请求到API');
-            const response = await fetch('https://api.deepseek.com/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
-                },
-                body: JSON.stringify({
-                    model: "deepseek-chat",
-                    messages: messages,
-                    stream: true
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`API请求失败: ${response.status}`);
-            }
-
-            let aiResponse = '';
-            response.body.on('data', chunk => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    const lines = chunk.toString().split('\n');
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const data = line.slice(6);
-                            if (data === '[DONE]') {
-                                currentConversation.messages.push({
-                                    content: aiResponse,
-                                    isUser: false,
-                                    timestamp: Date.now()
-                                });
-                                ws.send(JSON.stringify({
-                                    type: 'done',
-                                    content: aiResponse
-                                }));
-                            } else {
-                                try {
-                                    const parsed = JSON.parse(data);
-                                    if (parsed.choices && parsed.choices[0].delta.content) {
-                                        const content = parsed.choices[0].delta.content;
-                                        aiResponse += content;
-                                        ws.send(JSON.stringify({
-                                            type: 'content',
-                                            content: content
-                                        }));
-                                    }
-                                } catch (e) {
-                                    console.error('解析响应数据失败:', e);
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        } catch (error) {
-            console.error('处理消息时出错:', error);
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'error',
-                    content: '处理消息时出错，请重试'
-                }));
-            }
+          }
         }
+      }
     });
-
-    ws.on('close', () => {
-        console.log('WebSocket连接关闭');
-    });
+    
+    // 等待一小段时间以收集数据
+    setTimeout(() => {
+      if (newContent) {
+        res.json({ type: 'content', content: newContent });
+      } else if (streamData.isDone) {
+        responseStreams.delete(conversationId);
+        res.json({ type: 'done', content: streamData.buffer });
+      } else {
+        res.json({ type: 'waiting' });
+      }
+    }, 500);
+  } catch (error) {
+    console.error('获取响应流失败:', error);
+    res.status(500).json({ error: '获取响应流失败' });
+  }
 });
 
 // 获取所有对话
@@ -285,19 +178,23 @@ app.get('/api/conversations', (req, res) => {
   }
 });
 
+// 健康检查端点
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 // 错误处理中间件
 app.use((err, req, res, next) => {
-    console.error('服务器错误:', err);
-    res.status(500).json({ error: '服务器内部错误' });
+  console.error('服务器错误:', err);
+  res.status(500).json({ error: '服务器内部错误' });
 });
 
 // 仅在非Vercel环境中启动服务器
 if (process.env.NODE_ENV !== 'production') {
-    server.listen(PORT, () => {
-        console.log(`服务器运行在端口 ${PORT}`);
-        console.log('WebSocket服务器已启动');
-    });
+  app.listen(PORT, () => {
+    console.log(`服务器运行在端口 ${PORT}`);
+  });
 }
 
 // 导出应用实例供Vercel使用
-module.exports = server; 
+module.exports = app; 

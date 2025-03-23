@@ -14,8 +14,8 @@ const moodAnalysisBtn = document.querySelector('.mood-analysis-btn');
 const moodAnalysisContent = document.querySelector('.mood-analysis-content');
 
 // 状态变量
-let isConnected = false;
-let isTyping = false;
+let isConnected = true;
+let isPolling = false;
 let currentConversation = {
   id: Date.now(),
   title: '新对话',
@@ -161,8 +161,8 @@ function createTypingIndicator() {
 
 // 显示AI正在输入的状态
 function showTypingIndicator() {
-  if (!isTyping) {
-    isTyping = true;
+  if (!isPolling) {
+    isPolling = true;
     const indicator = createTypingIndicator();
     messagesContainer.appendChild(indicator);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -175,7 +175,7 @@ function hideTypingIndicator() {
   if (indicator) {
     indicator.remove();
   }
-  isTyping = false;
+  isPolling = false;
 }
 
 // 更新历史对话列表
@@ -270,36 +270,104 @@ function saveConversation() {
 }
 
 // 发送消息
-function sendMessage() {
+async function sendMessage() {
   const content = messageInput.value.trim();
   
-  if (content && isConnected && ws) {
-    // 显示用户消息
-    const userMessage = createMessageElement(content, true);
-    messagesContainer.appendChild(userMessage);
-    
-    // 更新当前对话
-    currentConversation.messages.push({
-      content,
-      isUser: true,
-      timestamp: Date.now()
-    });
-    
-    // 保存用户消息到本地存储
-    saveConversation();
-    
-    // 发送到服务器
-    ws.send(JSON.stringify({
-      content,
-      mood: currentConversation.mood
-    }));
-    
-    // 清空输入框并显示输入指示器
-    messageInput.value = '';
-    showTypingIndicator();
-    
-    // 滚动到底部
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  if (content) {
+    try {
+      // 显示用户消息
+      const userMessage = createMessageElement(content, true);
+      messagesContainer.appendChild(userMessage);
+      
+      // 更新当前对话
+      currentConversation.messages.push({
+        content,
+        isUser: true,
+        timestamp: Date.now()
+      });
+      
+      // 保存用户消息到本地存储
+      saveConversation();
+      
+      // 清空输入框并显示输入指示器
+      messageInput.value = '';
+      showTypingIndicator();
+      
+      // 发送到服务器
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          content,
+          mood: currentConversation.mood,
+          conversationId: currentConversation.id
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('发送消息失败');
+      }
+
+      // 开始轮询获取AI响应
+      startPolling(currentConversation.id);
+      
+      // 滚动到底部
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    } catch (error) {
+      console.error('发送消息失败:', error);
+      showError('发送消息失败，请重试');
+      hideTypingIndicator();
+    }
+  }
+}
+
+// 开始轮询获取AI响应
+async function startPolling(conversationId) {
+  if (isPolling) return;
+  
+  isPolling = true;
+  let aiResponse = '';
+  
+  while (isPolling) {
+    try {
+      const response = await fetch(`/api/chat/${conversationId}/stream`);
+      if (!response.ok) {
+        throw new Error('获取响应失败');
+      }
+      
+      const data = await response.json();
+      
+      if (data.type === 'content') {
+        appendMessage(data.content, false);
+        aiResponse += data.content;
+      } else if (data.type === 'done') {
+        // 保存AI的完整回复到当前对话
+        currentConversation.messages.push({
+          content: aiResponse,
+          isUser: false,
+          timestamp: Date.now()
+        });
+        
+        // 保存对话到本地存储
+        saveConversation();
+        
+        // 停止轮询
+        isPolling = false;
+        hideTypingIndicator();
+        break;
+      }
+      
+      // 等待一小段时间再继续轮询
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (error) {
+      console.error('轮询获取响应失败:', error);
+      showError('获取AI响应失败，请重试');
+      isPolling = false;
+      hideTypingIndicator();
+      break;
+    }
   }
 }
 
