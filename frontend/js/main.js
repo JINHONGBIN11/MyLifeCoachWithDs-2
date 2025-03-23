@@ -335,7 +335,7 @@ messageInput.addEventListener('input', () => {
 // 从后端获取历史对话
 async function fetchConversations() {
   try {
-    const response = await fetch('http://localhost:3000/api/conversations');
+    const response = await fetch('/api/conversations');
     if (response.ok) {
       const data = await response.json();
       // 只使用本地存储的对话列表
@@ -356,7 +356,7 @@ async function fetchConversations() {
 async function fetchMoodAnalysis() {
   try {
     console.log('开始获取心情分析...');
-    const response = await fetch('http://localhost:3000/api/mood-analysis');
+    const response = await fetch('/api/mood-analysis');
     console.log('收到响应:', response.status);
     
     if (!response.ok) {

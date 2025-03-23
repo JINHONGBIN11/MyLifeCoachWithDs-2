@@ -15,26 +15,25 @@ const PORT = process.env.PORT || 3000;
 
 // 配置CORS
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://my-life-coach-with-ds-2.vercel.app', /\.vercel\.app$/] 
-    : 'http://localhost:3000',
+  origin: '*',
   methods: ['GET', 'POST'],
   credentials: true
 }));
 
 app.use(express.json());
 
+// 存储对话历史（使用内存存储，因为 Vercel 是无状态的）
+let conversations = new Map();
+
 // WebSocket服务器设置
 const wss = new WebSocket.Server({ 
   server,
-  path: '/ws'
+  path: '/ws',
+  clientTracking: true
 });
 
 // 对话历史文件路径
 const HISTORY_FILE = path.join(__dirname, 'conversations.json');
-
-// 存储对话历史
-let conversations = new Map();
 
 // 加载历史对话
 try {
@@ -159,12 +158,12 @@ const moodPrompts = {
 };
 
 // 健康检查端点
-app.get('/health', (req, res) => {
+app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
 // WebSocket连接处理
-wss.on('connection', (ws, req) => {
+wss.on('connection', (ws) => {
     console.log('新的WebSocket连接');
     let currentConversation = null;
 
@@ -220,39 +219,40 @@ wss.on('connection', (ws, req) => {
             });
 
             if (!response.ok) {
-                console.error('API请求失败:', response.status, response.statusText);
                 throw new Error(`API请求失败: ${response.status}`);
             }
 
             let aiResponse = '';
             response.body.on('data', chunk => {
-                const lines = chunk.toString().split('\n');
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') {
-                            currentConversation.messages.push({
-                                content: aiResponse,
-                                isUser: false,
-                                timestamp: Date.now()
-                            });
-                            ws.send(JSON.stringify({
-                                type: 'done',
-                                content: aiResponse
-                            }));
-                        } else {
-                            try {
-                                const parsed = JSON.parse(data);
-                                if (parsed.choices && parsed.choices[0].delta.content) {
-                                    const content = parsed.choices[0].delta.content;
-                                    aiResponse += content;
-                                    ws.send(JSON.stringify({
-                                        type: 'content',
-                                        content: content
-                                    }));
+                if (ws.readyState === WebSocket.OPEN) {
+                    const lines = chunk.toString().split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') {
+                                currentConversation.messages.push({
+                                    content: aiResponse,
+                                    isUser: false,
+                                    timestamp: Date.now()
+                                });
+                                ws.send(JSON.stringify({
+                                    type: 'done',
+                                    content: aiResponse
+                                }));
+                            } else {
+                                try {
+                                    const parsed = JSON.parse(data);
+                                    if (parsed.choices && parsed.choices[0].delta.content) {
+                                        const content = parsed.choices[0].delta.content;
+                                        aiResponse += content;
+                                        ws.send(JSON.stringify({
+                                            type: 'content',
+                                            content: content
+                                        }));
+                                    }
+                                } catch (e) {
+                                    console.error('解析响应数据失败:', e);
                                 }
-                            } catch (e) {
-                                console.error('解析响应数据失败:', e);
                             }
                         }
                     }
@@ -260,10 +260,12 @@ wss.on('connection', (ws, req) => {
             });
         } catch (error) {
             console.error('处理消息时出错:', error);
-            ws.send(JSON.stringify({
-                type: 'error',
-                content: '处理消息时出错，请重试'
-            }));
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'error',
+                    content: '处理消息时出错，请重试'
+                }));
+            }
         }
     });
 
