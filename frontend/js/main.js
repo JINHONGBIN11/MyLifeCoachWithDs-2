@@ -121,8 +121,13 @@ async function sendMessage() {
                 throw new Error('发送消息失败');
             }
 
+            const responseData = await response.json();
+            if (responseData.error) {
+                throw new Error(responseData.error);
+            }
+
             // 开始轮询获取AI响应
-            startPolling(currentConversation.id);
+            await startPolling(currentConversation.id);
         } catch (error) {
             console.error('发送消息失败:', error);
             showError('发送消息失败，请重试');
@@ -137,45 +142,76 @@ async function startPolling(conversationId) {
     
     isPolling = true;
     let aiResponse = '';
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+    const POLLING_INTERVAL = 1000;
     
-    while (isPolling) {
-        try {
-            const response = await fetch(`/api/chat/${conversationId}/stream`);
-            if (!response.ok) {
-                throw new Error('获取响应失败');
-            }
-            
-            const data = await response.json();
-            
-            if (data.type === 'content') {
-                appendMessage(data.content, false);
-                aiResponse += data.content;
-            } else if (data.type === 'done') {
-                // 保存AI的完整回复到当前对话
-                currentConversation.messages.push({
-                    content: aiResponse,
-                    isUser: false,
-                    timestamp: Date.now()
+    try {
+        while (isPolling && retryCount < MAX_RETRIES) {
+            try {
+                const response = await fetch(`/api/chat/${conversationId}/stream`, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'Cache-Control': 'no-cache'
+                    }
                 });
                 
-                // 保存对话到本地存储
-                saveConversation();
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        throw new Error('对话不存在或已过期');
+                    }
+                    throw new Error(`服务器响应错误: ${response.status}`);
+                }
                 
-                // 停止轮询
-                isPolling = false;
-                hideTypingIndicator();
-                break;
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                if (data.type === 'content') {
+                    appendMessage(data.content, false);
+                    aiResponse += data.content;
+                    retryCount = 0; // 重置重试计数
+                } else if (data.type === 'done') {
+                    // 保存AI的完整回复到当前对话
+                    if (aiResponse) {
+                        currentConversation.messages.push({
+                            content: aiResponse,
+                            isUser: false,
+                            timestamp: Date.now()
+                        });
+                        
+                        // 保存对话到本地存储
+                        saveConversation();
+                    }
+                    
+                    // 停止轮询
+                    isPolling = false;
+                    hideTypingIndicator();
+                    break;
+                }
+                
+                // 等待一段时间再继续轮询
+                await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL));
+            } catch (error) {
+                console.error('轮询获取响应失败:', error);
+                retryCount++;
+                
+                if (retryCount >= MAX_RETRIES) {
+                    throw new Error('获取AI响应失败，已达到最大重试次数');
+                }
+                
+                // 等待后重试
+                await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL * retryCount));
             }
-            
-            // 等待一小段时间再继续轮询
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (error) {
-            console.error('轮询获取响应失败:', error);
-            showError('获取AI响应失败，请重试');
-            isPolling = false;
-            hideTypingIndicator();
-            break;
         }
+    } catch (error) {
+        console.error('轮询过程中出错:', error);
+        showError(error.message || '获取AI响应失败，请重试');
+    } finally {
+        isPolling = false;
+        hideTypingIndicator();
     }
 }
 
