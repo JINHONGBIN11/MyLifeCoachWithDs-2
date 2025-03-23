@@ -117,12 +117,12 @@ app.post('/api/chat', async (req, res) => {
                     'Accept': 'application/json'
                 },
                 body: JSON.stringify({
-                    model: 'deepseek-v3', // 更新为最新的DeepSeek-V3模型
+                    model: 'deepseek-chat', // 更新为正确的DeepSeek模型名称
                     messages: messages,
                     temperature: moodMap[conversation.mood] || 0.6,
                     max_tokens: 800, // 进一步减少token数以加快响应
-                    stream: false,
-                    timeout: 45 // 设置API超时时间为45秒
+                    stream: false
+                    // 移除timeout参数，由fetch的AbortController控制
                 }),
                 signal: controller.signal
             });
