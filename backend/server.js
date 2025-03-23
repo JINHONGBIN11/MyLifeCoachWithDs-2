@@ -101,6 +101,10 @@ app.post('/api/chat', async (req, res) => {
         const timeout = setTimeout(() => controller.abort(), 25000); // 25秒超时
 
         try {
+            // 记录API调用信息（不包含敏感信息）
+            console.log('准备调用DeepSeek API，模型：deepseek-chat，心情：', conversation.mood);
+            console.log('API密钥状态：', process.env.DEEPSEEK_API_KEY ? '已设置' : '未设置');
+            
             // 调用DeepSeek API
             const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
                 method: 'POST',
@@ -117,24 +121,34 @@ app.post('/api/chat', async (req, res) => {
                 }),
                 signal: controller.signal
             });
+            
+            console.log('DeepSeek API响应状态：', response.status);
 
             clearTimeout(timeout);
 
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error('DeepSeek API 错误响应:', errorText);
+                console.error('响应状态码:', response.status);
+                console.error('请求头:', JSON.stringify(response.headers.raw()));
                 throw new Error(`API请求失败: ${response.status} - ${errorText}`);
             }
 
+            console.log('DeepSeek API响应成功，开始解析数据');
             const data = await response.json();
+            console.log('数据解析完成');
             
             if (data.error) {
+                console.error('DeepSeek API返回错误:', data.error);
                 throw new Error(data.error.message || '未知错误');
             }
 
             if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                console.error('API响应格式错误，完整响应:', JSON.stringify(data));
                 throw new Error('API响应格式错误');
             }
+            
+            console.log('成功获取AI回复');
 
             const aiResponse = data.choices[0].message.content;
 

@@ -264,6 +264,9 @@ function saveConversation() {
 
 // 事件监听器
 document.addEventListener('DOMContentLoaded', () => {
+    // 测试服务器连接
+    testServerConnection();
+    
     sendButton.addEventListener('click', sendMessage);
     
     messageInput.addEventListener('keypress', (e) => {
