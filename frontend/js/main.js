@@ -1,8 +1,11 @@
-// WebSocket连接
-let ws = null;
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_INTERVAL = 3000;
+// 状态变量
+let isPolling = false;
+let currentConversation = {
+  id: Date.now(),
+  title: '新对话',
+  messages: [],
+  mood: 'peaceful'
+};
 
 // DOM元素
 const messagesContainer = document.querySelector('.messages-container');
@@ -13,115 +16,8 @@ const historyList = document.querySelector('.history-list');
 const moodAnalysisBtn = document.querySelector('.mood-analysis-btn');
 const moodAnalysisContent = document.querySelector('.mood-analysis-content');
 
-// 状态变量
-let isConnected = true;
-let isPolling = false;
-let currentConversation = {
-  id: Date.now(),
-  title: '新对话',
-  messages: [],
-  mood: 'peaceful'
-};
-
 // 历史对话存储
 let conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
-
-// 更新连接状态
-function updateConnectionStatus(connected, maxRetriesReached = false) {
-  isConnected = connected;
-  sendButton.disabled = !connected;
-  
-  if (connected) {
-    sendButton.textContent = '发送';
-    sendButton.classList.remove('disabled');
-  } else {
-    sendButton.textContent = maxRetriesReached ? '连接失败，点击重试' : '连接中...';
-    sendButton.classList.add('disabled');
-    if (maxRetriesReached) {
-      sendButton.onclick = () => {
-        reconnectAttempts = 0;
-        connectWebSocket();
-      };
-    }
-  }
-}
-
-// 获取WebSocket URL
-function getWebSocketUrl() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const path = '/ws';
-    return `${protocol}//${host}${path}`;
-}
-
-// 连接WebSocket
-function connectWebSocket() {
-    if (ws) {
-        ws.close();
-    }
-    
-    const wsUrl = getWebSocketUrl();
-    console.log('尝试连接WebSocket:', wsUrl);
-    ws = new WebSocket(wsUrl);
-    
-    ws.onopen = () => {
-        console.log('WebSocket连接成功');
-        isConnected = true;
-        reconnectAttempts = 0;
-        updateConnectionStatus(true);
-        
-        // 连接成功后获取历史对话
-        fetchConversations();
-    };
-    
-    ws.onclose = () => {
-        console.log('WebSocket连接关闭');
-        isConnected = false;
-        updateConnectionStatus(false);
-        
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            console.log(`尝试重新连接 (${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
-            reconnectAttempts++;
-            setTimeout(connectWebSocket, RECONNECT_INTERVAL);
-        } else {
-            console.log('达到最大重连次数');
-            updateConnectionStatus(false, true);
-        }
-    };
-    
-    ws.onerror = (error) => {
-        console.error('WebSocket错误:', error);
-        isConnected = false;
-        updateConnectionStatus(false);
-    };
-    
-    ws.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'content') {
-                appendMessage(data.content, false);
-            } else if (data.type === 'done') {
-                console.log('AI回复完成');
-                // 保存AI的完整回复到当前对话
-                const aiMessage = messagesContainer.lastElementChild.querySelector('.message-ai');
-                if (aiMessage) {
-                    currentConversation.messages.push({
-                        content: aiMessage.textContent,
-                        isUser: false,
-                        timestamp: Date.now()
-                    });
-                    // 保存对话到本地存储
-                    saveConversation();
-                }
-            } else if (data.type === 'error') {
-                showError(data.content);
-            }
-        } catch (error) {
-            console.error('处理消息时出错:', error);
-            showError('处理消息时出错');
-        }
-    };
-}
 
 // 显示错误消息
 function showError(message) {
@@ -134,48 +30,153 @@ function showError(message) {
 
 // 创建消息元素
 function createMessageElement(content, isUser = false) {
-  const messageDiv = document.createElement('div');
-  messageDiv.className = 'message';
-  
-  const messageContent = document.createElement('div');
-  messageContent.className = isUser ? 'message-user' : 'message-ai';
-  messageContent.textContent = content;
-  
-  messageDiv.appendChild(messageContent);
-  return messageDiv;
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message';
+    
+    const messageContent = document.createElement('div');
+    messageContent.className = isUser ? 'message-user' : 'message-ai';
+    messageContent.textContent = content;
+    
+    messageDiv.appendChild(messageContent);
+    return messageDiv;
 }
 
-// 创建输入指示器
-function createTypingIndicator() {
-  const indicator = document.createElement('div');
-  indicator.className = 'typing-indicator';
-  
-  for (let i = 0; i < 3; i++) {
-    const dot = document.createElement('div');
-    dot.className = 'typing-dot';
-    indicator.appendChild(dot);
-  }
-  
-  return indicator;
-}
-
-// 显示AI正在输入的状态
-function showTypingIndicator() {
-  if (!isPolling) {
-    isPolling = true;
-    const indicator = createTypingIndicator();
-    messagesContainer.appendChild(indicator);
+// 添加消息到界面
+function appendMessage(content, isUser = false) {
+    if (!isUser && !document.querySelector('.message-ai:last-child')) {
+        const messageDiv = createMessageElement(content, isUser);
+        messagesContainer.appendChild(messageDiv);
+    } else if (!isUser) {
+        const lastAiMessage = document.querySelector('.message-ai:last-child');
+        if (lastAiMessage) {
+            lastAiMessage.textContent += content;
+        }
+    } else {
+        const messageDiv = createMessageElement(content, isUser);
+        messagesContainer.appendChild(messageDiv);
+    }
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }
 }
 
-// 隐藏AI正在输入的状态
+// 显示输入指示器
+function showTypingIndicator() {
+    if (!document.querySelector('.typing-indicator')) {
+        const indicator = document.createElement('div');
+        indicator.className = 'typing-indicator';
+        for (let i = 0; i < 3; i++) {
+            const dot = document.createElement('div');
+            dot.className = 'typing-dot';
+            indicator.appendChild(dot);
+        }
+        messagesContainer.appendChild(indicator);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+}
+
+// 隐藏输入指示器
 function hideTypingIndicator() {
-  const indicator = document.querySelector('.typing-indicator');
-  if (indicator) {
-    indicator.remove();
-  }
-  isPolling = false;
+    const indicator = document.querySelector('.typing-indicator');
+    if (indicator) {
+        indicator.remove();
+    }
+}
+
+// 发送消息
+async function sendMessage() {
+    const content = messageInput.value.trim();
+    
+    if (content && !isPolling) {
+        try {
+            // 显示用户消息
+            appendMessage(content, true);
+            
+            // 更新当前对话
+            currentConversation.messages.push({
+                content,
+                isUser: true,
+                timestamp: Date.now()
+            });
+            
+            // 保存用户消息到本地存储
+            saveConversation();
+            
+            // 清空输入框并显示输入指示器
+            messageInput.value = '';
+            showTypingIndicator();
+            
+            // 发送到服务器
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    content,
+                    mood: currentConversation.mood,
+                    conversationId: currentConversation.id
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('发送消息失败');
+            }
+
+            // 开始轮询获取AI响应
+            startPolling(currentConversation.id);
+        } catch (error) {
+            console.error('发送消息失败:', error);
+            showError('发送消息失败，请重试');
+            hideTypingIndicator();
+        }
+    }
+}
+
+// 开始轮询获取AI响应
+async function startPolling(conversationId) {
+    if (isPolling) return;
+    
+    isPolling = true;
+    let aiResponse = '';
+    
+    while (isPolling) {
+        try {
+            const response = await fetch(`/api/chat/${conversationId}/stream`);
+            if (!response.ok) {
+                throw new Error('获取响应失败');
+            }
+            
+            const data = await response.json();
+            
+            if (data.type === 'content') {
+                appendMessage(data.content, false);
+                aiResponse += data.content;
+            } else if (data.type === 'done') {
+                // 保存AI的完整回复到当前对话
+                currentConversation.messages.push({
+                    content: aiResponse,
+                    isUser: false,
+                    timestamp: Date.now()
+                });
+                
+                // 保存对话到本地存储
+                saveConversation();
+                
+                // 停止轮询
+                isPolling = false;
+                hideTypingIndicator();
+                break;
+            }
+            
+            // 等待一小段时间再继续轮询
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (error) {
+            console.error('轮询获取响应失败:', error);
+            showError('获取AI响应失败，请重试');
+            isPolling = false;
+            hideTypingIndicator();
+            break;
+        }
+    }
 }
 
 // 更新历史对话列表
@@ -269,129 +270,56 @@ function saveConversation() {
   }
 }
 
-// 发送消息
-async function sendMessage() {
-  const content = messageInput.value.trim();
-  
-  if (content) {
-    try {
-      // 显示用户消息
-      const userMessage = createMessageElement(content, true);
-      messagesContainer.appendChild(userMessage);
-      
-      // 更新当前对话
-      currentConversation.messages.push({
-        content,
-        isUser: true,
-        timestamp: Date.now()
-      });
-      
-      // 保存用户消息到本地存储
-      saveConversation();
-      
-      // 清空输入框并显示输入指示器
-      messageInput.value = '';
-      showTypingIndicator();
-      
-      // 发送到服务器
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          content,
-          mood: currentConversation.mood,
-          conversationId: currentConversation.id
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('发送消息失败');
-      }
-
-      // 开始轮询获取AI响应
-      startPolling(currentConversation.id);
-      
-      // 滚动到底部
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    } catch (error) {
-      console.error('发送消息失败:', error);
-      showError('发送消息失败，请重试');
-      hideTypingIndicator();
-    }
-  }
-}
-
-// 开始轮询获取AI响应
-async function startPolling(conversationId) {
-  if (isPolling) return;
-  
-  isPolling = true;
-  let aiResponse = '';
-  
-  while (isPolling) {
-    try {
-      const response = await fetch(`/api/chat/${conversationId}/stream`);
-      if (!response.ok) {
-        throw new Error('获取响应失败');
-      }
-      
-      const data = await response.json();
-      
-      if (data.type === 'content') {
-        appendMessage(data.content, false);
-        aiResponse += data.content;
-      } else if (data.type === 'done') {
-        // 保存AI的完整回复到当前对话
-        currentConversation.messages.push({
-          content: aiResponse,
-          isUser: false,
-          timestamp: Date.now()
-        });
-        
-        // 保存对话到本地存储
-        saveConversation();
-        
-        // 停止轮询
-        isPolling = false;
-        hideTypingIndicator();
-        break;
-      }
-      
-      // 等待一小段时间再继续轮询
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    } catch (error) {
-      console.error('轮询获取响应失败:', error);
-      showError('获取AI响应失败，请重试');
-      isPolling = false;
-      hideTypingIndicator();
-      break;
-    }
-  }
-}
-
 // 事件监听器
-sendButton.addEventListener('click', sendMessage);
-
-messageInput.addEventListener('keypress', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
-
-// 心情按钮点击事件
-moodButtons.forEach(btn => {
-  btn.addEventListener('click', () => {
-    // 移除其他按钮的active状态
-    moodButtons.forEach(b => b.classList.remove('active'));
-    // 添加当前按钮的active状态
-    btn.classList.add('active');
-    // 更新当前心情
-    currentConversation.mood = btn.dataset.mood;
-    saveConversation();
-  });
+document.addEventListener('DOMContentLoaded', () => {
+    // 初始化发送按钮
+    sendButton.addEventListener('click', sendMessage);
+    
+    // 初始化输入框
+    messageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+    
+    // 初始化心情按钮
+    moodButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            moodButtons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentConversation.mood = btn.dataset.mood;
+            saveConversation();
+        });
+    });
+    
+    // 初始化新对话按钮
+    const newChatBtn = document.getElementById('newChatBtn');
+    if (newChatBtn) {
+        newChatBtn.addEventListener('click', createNewConversation);
+    }
+    
+    // 初始化心情分析按钮
+    if (moodAnalysisBtn && moodAnalysisContent) {
+        moodAnalysisBtn.addEventListener('click', () => {
+            moodAnalysisContent.classList.toggle('show');
+            if (moodAnalysisContent.classList.contains('show')) {
+                fetchMoodAnalysis();
+            }
+        });
+    }
+    
+    // 初始化历史对话列表
+    fetchConversations();
+    
+    // 显示欢迎消息
+    if (!currentConversation.messages.length) {
+        messagesContainer.innerHTML = `
+            <div class="welcome-message">
+                你好！我是你的AI生活教练。我可以帮助你提供生活建议、解决困扰、分享积极态度和情绪支持。请告诉我你现在的感受，我会根据你的心情提供相应的帮助。
+            </div>
+        `;
+    }
 });
 
 // 自动调整输入框高度
@@ -530,14 +458,6 @@ function generateMoodAdvice(moodStats) {
   }
 }
 
-// 心情分析按钮点击事件
-moodAnalysisBtn.addEventListener('click', () => {
-  moodAnalysisContent.classList.toggle('show');
-  if (moodAnalysisContent.classList.contains('show')) {
-    fetchMoodAnalysis();
-  }
-});
-
 // 删除对话
 function deleteConversation(conversationId) {
   if (confirm('确定要删除这个对话吗？此操作不可恢复。')) {
@@ -569,11 +489,6 @@ function deleteConversation(conversationId) {
           btn.classList.remove('active');
         }
       });
-
-      // 如果WebSocket连接断开，尝试重新连接
-      if (!isConnected && ws) {
-        connectWebSocket();
-      }
     } catch (error) {
       console.error('删除对话失败:', error);
       alert('删除对话失败，请重试');
@@ -610,41 +525,4 @@ function createNewConversation() {
   
   // 更新历史列表
   updateHistoryList();
-}
-
-// 初始化事件监听
-document.addEventListener('DOMContentLoaded', () => {
-  // 添加新对话按钮事件监听
-  const newChatBtn = document.getElementById('newChatBtn');
-  if (newChatBtn) {
-    newChatBtn.addEventListener('click', createNewConversation);
-  }
-  
-  // 初始化心情按钮
-  moodButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      moodButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentConversation.mood = btn.dataset.mood;
-    });
-  });
-  
-  // 初始化心情分析按钮
-  const moodAnalysisBtn = document.querySelector('.mood-analysis-btn');
-  const moodAnalysisContent = document.querySelector('.mood-analysis-content');
-  
-  if (moodAnalysisBtn && moodAnalysisContent) {
-    moodAnalysisBtn.addEventListener('click', () => {
-      moodAnalysisContent.classList.toggle('show');
-      if (moodAnalysisContent.classList.contains('show')) {
-        fetchMoodAnalysis();
-      }
-    });
-  }
-  
-  // 初始化WebSocket连接
-  connectWebSocket();
-  
-  // 初始化历史对话列表
-  fetchConversations();
-}); 
+} 
