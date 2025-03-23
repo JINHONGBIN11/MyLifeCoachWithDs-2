@@ -25,6 +25,7 @@
     }
   ],
   "env": {
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    "DEEPSEEK_API_KEY": "@deepseek_api_key"
   }
-} 
+}
