@@ -24,7 +24,8 @@
     }
   ],
   "env": {
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    "DEEPSEEK_API_KEY": "DEEPSEEK_API_KEY"
   },
   "regions": ["hkg1"]
 }
