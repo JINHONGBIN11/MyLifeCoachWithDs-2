@@ -103,121 +103,184 @@ app.post('/api/chat', async (req, res) => {
             controller.abort();
         }, 50000); // 50秒超时
 
+        // 定义重试函数
+        async function callAPIWithRetry(apiUrl, requestOptions, maxRetries = 2) {
+            let lastError = null;
+            
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                try {
+                    // 如果是重试，记录重试信息
+                    if (attempt > 0) {
+                        console.log(`正在进行第 ${attempt} 次重试，共 ${maxRetries} 次重试机会...`);
+                        // 重试前等待一段时间，避免频繁请求
+                        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                    }
+                    
+                    // 发送请求
+                    const response = await fetch(apiUrl, requestOptions);
+                    return response;
+                } catch (error) {
+                    console.error(`API调用失败 (尝试 ${attempt+1}/${maxRetries+1}):`, error.message);
+                    lastError = error;
+                    
+                    // 如果是最后一次尝试，或者是不应该重试的错误，则抛出
+                    if (attempt === maxRetries || error.name !== 'AbortError' && !error.message.includes('ECONNRESET')) {
+                        throw error;
+                    }
+                }
+            }
+            
+            // 如果所有重试都失败，抛出最后一个错误
+            throw lastError;
+        }
+        
         try {
             // 记录API调用信息（不包含敏感信息）
-            console.log('准备调用DeepSeek API，模型：deepseek-v3，心情：', conversation.mood);
-            console.log('API密钥状态：', process.env.DEEPSEEK_API_KEY ? '已设置' : '未设置');
+            console.log('准备调用DeepSeek API，模型：deepseek-chat，心情：', conversation.mood);
             
-            // 调用DeepSeek API
-            const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+            // 准备API请求参数
+            const apiUrl = 'https://api.deepseek.com/v1/chat/completions';
+            const requestBody = {
+                model: 'deepseek-chat',
+                messages: messages,
+                temperature: moodMap[conversation.mood] || 0.6,
+                max_tokens: 500,
+                stream: false
+            };
+            
+            const requestOptions = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
                     'Accept': 'application/json'
                 },
-                body: JSON.stringify({
-                    model: 'deepseek-chat', // 更新为正确的DeepSeek模型名称
-                    messages: messages,
-                    temperature: moodMap[conversation.mood] || 0.6,
-                    max_tokens: 800, // 进一步减少token数以加快响应
-                    stream: false
-                    // 移除timeout参数，由fetch的AbortController控制
-                }),
+                body: JSON.stringify(requestBody),
                 signal: controller.signal
-            });
+            };
             
-            console.log('DeepSeek API请求完成，状态码:', response.status);
-            
-            console.log('DeepSeek API响应状态：', response.status);
-
-            clearTimeout(timeout);
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error('DeepSeek API 错误响应:', errorText);
-                console.error('响应状态码:', response.status);
-                console.error('请求头:', JSON.stringify(response.headers.raw()));
+            // 使用重试机制调用API
+            let response;
+            try {
+                response = await callAPIWithRetry(apiUrl, requestOptions, 3);
+                clearTimeout(timeout);
                 
-                // 根据状态码提供更具体的错误信息
-                let errorMessage = `API请求失败: ${response.status}`;
-                if (response.status === 401) {
-                    errorMessage = '认证失败：请检查API密钥是否有效';
-                } else if (response.status === 429) {
-                    errorMessage = '请求过多：已超过API调用限制，请稍后再试';
-                } else if (response.status >= 500) {
-                    errorMessage = 'DeepSeek服务器错误：请稍后再试';
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorMessage;
+                    
+                    switch (response.status) {
+                        case 401:
+                            errorMessage = '认证失败：请检查API密钥是否有效';
+                            break;
+                        case 429:
+                            errorMessage = '请求过多：已超过API调用限制，请稍后再试';
+                            break;
+                        case 500:
+                        case 502:
+                        case 503:
+                        case 504:
+                            errorMessage = 'DeepSeek服务器错误：请稍后再试';
+                            break;
+                        default:
+                            errorMessage = `API请求失败: ${response.status}`;
+                    }
+                    
+                    console.error('DeepSeek API错误:', {
+                        status: response.status,
+                        message: errorMessage,
+                        details: errorText
+                    });
+                    
+                    throw new Error(errorMessage);
                 }
                 
-                throw new Error(`${errorMessage} - ${errorText}`);
-            }
-
-            console.log('DeepSeek API响应成功，开始解析数据');
-            const data = await response.json();
-            console.log('数据解析完成');
-            
-            if (data.error) {
-                console.error('DeepSeek API返回错误:', data.error);
-                throw new Error(data.error.message || '未知错误');
-            }
-
-            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-                console.error('API响应格式错误，完整响应:', JSON.stringify(data));
-                throw new Error('API响应格式错误');
-            }
-            
-            console.log('成功获取AI回复');
-
-            const aiResponse = data.choices[0].message.content;
-
-            // 保存AI回复到对话历史
-            conversation.messages.push({
-                role: 'assistant',
-                content: aiResponse
-            });
-
-            // 返回响应
-            res.json({ content: aiResponse });
+                const data = await response.json();
+                
+                if (!data || !data.choices || !data.choices[0] || !data.choices[0].message) {
+                    throw new Error('API响应格式无效');
+                }
+                const aiResponse = data.choices[0].message.content;
+                
+                // 保存AI回复到对话历史
+                conversation.messages.push({
+                    role: 'assistant',
+                    content: aiResponse,
+                    timestamp: Date.now()
+                });
+                
+                // 记录成功响应
+                console.log('成功获取AI回复，长度:', aiResponse.length);
+                
+                // 返回成功响应
+                res.json({
+                    status: 'success',
+                    content: aiResponse,
+                    timestamp: Date.now()
+                });
 
         } catch (error) {
-            clearTimeout(timeout); // 确保清除超时计时器
+            clearTimeout(timeout);
+            
+            let errorDetails = {
+                type: error.name,
+                message: error.message,
+                timestamp: new Date().toISOString(),
+                conversationId: conversationId
+            };
             
             if (error.name === 'AbortError') {
-                console.error('API请求被中止：请求超时');
-                throw new Error('API请求超时，请稍后重试');
+                errorDetails.code = 'TIMEOUT';
+                errorDetails.message = 'API请求超时，请稍后重试';
+                console.error('API请求超时:', errorDetails);
+            } else if (error.response) {
+                errorDetails.code = 'API_ERROR';
+                errorDetails.status = error.response.status;
+                console.error('API响应错误:', errorDetails);
+            } else if (error.request) {
+                errorDetails.code = 'NETWORK_ERROR';
+                console.error('网络请求失败:', errorDetails);
+            } else {
+                errorDetails.code = 'UNKNOWN_ERROR';
+                console.error('未知错误:', errorDetails);
             }
             
-            // 详细记录错误信息
-            console.error('API请求失败详情:', {
-                errorName: error.name,
-                errorMessage: error.message,
-                errorStack: error.stack
-            });
-            
-            throw error;
+            throw errorDetails;
         }
     } catch (error) {
-        console.error('处理聊天请求时出错:', error);
-        
-        // 根据错误类型设置适当的状态码
         let statusCode = 500;
-        if (error.message.includes('API请求超时')) {
-            statusCode = 504; // Gateway Timeout
-        } else if (error.message.includes('API密钥')) {
-            statusCode = 401; // Unauthorized
-        } else if (error.message.includes('请求失败') && error.message.includes('429')) {
-            statusCode = 429; // Too Many Requests
-        }
-        
-        // 返回详细错误信息
-        res.status(statusCode).json({ 
+        let errorResponse = {
             error: error.message || '处理请求失败',
+            code: error.code || 'INTERNAL_ERROR',
             timestamp: Date.now(),
             requestId: `req_${Date.now().toString(36)}`
+        };
+        
+        switch (error.code) {
+            case 'TIMEOUT':
+                statusCode = 504;
+                break;
+            case 'API_ERROR':
+                statusCode = error.status || 500;
+                break;
+            case 'NETWORK_ERROR':
+                statusCode = 503;
+                break;
+            case 'UNAUTHORIZED':
+                statusCode = 401;
+                break;
+            case 'RATE_LIMIT':
+                statusCode = 429;
+                break;
+        }
+        
+        console.error('请求处理失败:', {
+            ...errorResponse,
+            conversationId: conversationId,
+            stack: error.stack
         });
         
-        // 记录错误发生时间和会话ID
-        console.error(`错误发生时间: ${new Date().toISOString()}, 会话ID: ${conversationId || 'unknown'}`);
+        res.status(statusCode).json(errorResponse);
     }
 });
 
