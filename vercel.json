@@ -19,10 +19,7 @@
   },
   "regions": ["hkg1"],
   "functions": {
-    "api/chat/index.js": {
-      "maxDuration": 10
-    },
-    "api/chat/[id]/stream.js": {
+    "backend/server.js": {
       "maxDuration": 10
     }
   }
