@@ -84,10 +84,12 @@ app.post('/api/chat', async (req, res) => {
         // 准备发送到API的消息
         const messages = [
             systemMessage,
-            ...conversation.messages.slice(-10) // 只发送最近的10条消息
+            ...conversation.messages.slice(-5) // 只发送最近的5条消息以减少处理时间
         ];
 
-        console.log('发送到DeepSeek API的消息列表:', messages);
+        // 设置超时
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 25000); // 25秒超时
 
         try {
             // 调用DeepSeek API
@@ -101,10 +103,13 @@ app.post('/api/chat', async (req, res) => {
                     model: 'deepseek-chat',
                     messages: messages,
                     temperature: moodMap[conversation.mood] || 0.6,
-                    max_tokens: 2000,
+                    max_tokens: 1000, // 减少token数以加快响应
                     stream: false
-                })
+                }),
+                signal: controller.signal
             });
+
+            clearTimeout(timeout);
 
             if (!response.ok) {
                 const errorText = await response.text();
@@ -116,6 +121,10 @@ app.post('/api/chat', async (req, res) => {
             
             if (data.error) {
                 throw new Error(data.error.message || '未知错误');
+            }
+
+            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                throw new Error('API响应格式错误');
             }
 
             const aiResponse = data.choices[0].message.content;
@@ -130,12 +139,15 @@ app.post('/api/chat', async (req, res) => {
             res.json({ content: aiResponse });
 
         } catch (error) {
-            console.error('调用DeepSeek API时出错:', error);
-            res.status(500).json({ error: error.message || '处理请求失败' });
+            if (error.name === 'AbortError') {
+                throw new Error('API请求超时，请稍后重试');
+            }
+            throw error;
         }
     } catch (error) {
         console.error('处理聊天请求时出错:', error);
-        res.status(500).json({ error: error.message || '处理请求失败' });
+        res.status(error.message.includes('API请求超时') ? 504 : 500)
+           .json({ error: error.message || '处理请求失败' });
     }
 });
 

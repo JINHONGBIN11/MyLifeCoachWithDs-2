@@ -113,42 +113,56 @@ async function sendMessage() {
         // 清空输入框并显示输入指示器
         messageInput.value = '';
         showTypingIndicator();
-        
-        // 发送POST请求到服务器
-        const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                content,
-                mood: currentConversation.mood,
-                conversationId: currentConversation.id
-            })
-        });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('服务器响应错误:', response.status, errorText);
-            throw new Error(`服务器响应错误: ${response.status}`);
-        }
+        // 设置超时
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000); // 30秒超时
 
-        const data = await response.json();
-        
-        if (data.error) {
-            throw new Error(data.error);
-        }
-
-        if (data.content) {
-            // 显示AI回复
-            appendMessage(data.content, false);
-            
-            // 保存AI回复到对话历史
-            currentConversation.messages.push({
-                role: 'assistant',
-                content: data.content
+        try {
+            // 发送POST请求到服务器
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    content,
+                    mood: currentConversation.mood,
+                    conversationId: currentConversation.id
+                }),
+                signal: controller.signal
             });
-            saveConversation();
+
+            clearTimeout(timeout);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('服务器响应错误:', response.status, errorText);
+                throw new Error(`服务器响应错误: ${response.status}`);
+            }
+
+            const data = await response.json();
+            
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            if (data.content) {
+                // 显示AI回复
+                appendMessage(data.content, false);
+                
+                // 保存AI回复到对话历史
+                currentConversation.messages.push({
+                    role: 'assistant',
+                    content: data.content
+                });
+                saveConversation();
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('请求超时，请稍后重试');
+            }
+            throw error;
         }
     } catch (error) {
         console.error('发送消息失败:', error);
