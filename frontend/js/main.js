@@ -172,101 +172,85 @@ async function sendMessage() {
         messageInput.value = '';
         showTypingIndicator();
 
-        // 设置最大重试次数
-        const maxRetries = 2;
-        let retryCount = 0;
-        let success = false;
-        
-        while (retryCount <= maxRetries && !success) {
-            try {
-                // 如果是重试，显示重试指示器
-                if (retryCount > 0) {
-                    hideTypingIndicator();
-                    showRetryIndicator(retryCount);
-                    // 重试前等待一段时间
-                    await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
-                }
-                
-                // 设置超时 - 增加到45秒
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 45000);
-                
-                // 发送POST请求到服务器
-                const response = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        content,
-                        mood: currentConversation.mood,
-                        conversationId: currentConversation.id
-                    }),
-                    signal: controller.signal
-                });
-                
-                clearTimeout(timeout);
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error(`服务器响应错误 (尝试 ${retryCount+1}/${maxRetries+1}):`, response.status, errorText);
-                    
-                    // 检查是否应该重试
-                    if (response.status === 429 || response.status === 503 || response.status === 504) {
-                        if (retryCount < maxRetries) {
-                            retryCount++;
-                            continue; // 继续下一次重试
+        // 创建消息容器
+        const messageContainer = document.createElement('div');
+        messageContainer.className = 'message ai';
+        const messageContent = document.createElement('p');
+        messageContainer.appendChild(messageContent);
+        messagesContainer.appendChild(messageContainer);
+
+        try {
+            // 创建 EventSource 连接
+            const response = await fetch('/api/chat/stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    content,
+                    mood: currentConversation.mood,
+                    conversationId: currentConversation.id
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || '发送消息失败');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let fullResponse = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n');
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        if (data === '[DONE]') continue;
+
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.error) {
+                                throw new Error(parsed.error);
+                            }
+                            if (parsed.content) {
+                                fullResponse += parsed.content;
+                                messageContent.textContent = fullResponse;
+                                // 自动滚动到底部
+                                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                            }
+                        } catch (e) {
+                            console.error('解析流数据失败:', e);
                         }
                     }
-                    
-                    throw new Error(`服务器响应错误: ${response.status}`);
                 }
-                
-                const data = await response.json();
-                
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-                
-                if (data.content) {
-                    // 显示AI回复
-                    appendMessage(data.content, false);
-                    
-                    // 保存AI回复到对话历史
-                    currentConversation.messages.push({
-                        role: 'assistant',
-                        content: data.content
-                    });
-                    saveConversation();
-                    
-                    // 标记成功
-                    success = true;
-                }
-            } catch (error) {
-                console.error(`请求失败 (尝试 ${retryCount+1}/${maxRetries+1}):`, error);
-                
-                if (error.name === 'AbortError') {
-                    // 超时错误，可以重试
-                    if (retryCount < maxRetries) {
-                        retryCount++;
-                        continue; // 继续下一次重试
-                    } else {
-                        throw new Error('请求超时，已尝试多次重试但仍然失败');
-                    }
-                }
-                
-                // 其他错误，如果还有重试机会，继续重试
-                if (retryCount < maxRetries) {
-                    retryCount++;
-                    continue; // 继续下一次重试
-                }
-                
-                throw error; // 重试次数用完，抛出错误
             }
+
+            // 保存完整回复到对话历史
+            if (fullResponse) {
+                currentConversation.messages.push({
+                    role: 'assistant',
+                    content: fullResponse,
+                    timestamp: Date.now()
+                });
+                saveConversation();
+            }
+
+        } catch (error) {
+            console.error('处理流式响应失败:', error);
+            showError(error.message);
+            // 移除空的消息容器
+            messageContainer.remove();
         }
     } catch (error) {
         console.error('发送消息失败:', error);
-        showError(`发送消息失败: ${error.message}`);
+        showError(error.message);
     } finally {
         hideTypingIndicator();
     }
